@@ -10,6 +10,7 @@ import {
   Copy,
   Check,
   ArrowLeft,
+  Eye,
 } from "lucide-react";
 import { RetellWebClient } from "retell-client-js-sdk";
 import { CALL_MODES, type CallMode } from "@/lib/presets";
@@ -17,6 +18,7 @@ import { addCallRecord } from "@/lib/callHistory";
 import { startRinging, stopRinging } from "@/lib/ringTone";
 import { useToast } from "./Toast";
 import CallTimer from "./CallTimer";
+import CallViewer from "./CallViewer";
 
 type CallPhase = "mic-check" | "ringing" | "connected" | "ended";
 
@@ -47,6 +49,7 @@ export default function CallScreen({
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [showViewer, setShowViewer] = useState(false);
 
   const clientRef = useRef<RetellWebClient | null>(null);
   const startTimeRef = useRef<number | null>(null);
@@ -359,14 +362,23 @@ export default function CallScreen({
             New Call
           </button>
           {callId && (
-            <button
-              onClick={downloadMetadata}
-              disabled={downloading}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm transition-colors disabled:opacity-50"
-            >
-              <Download size={16} />
-              {downloading ? "Downloading..." : "Download Metadata"}
-            </button>
+            <>
+              <button
+                onClick={() => setShowViewer(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm transition-colors"
+              >
+                <Eye size={16} />
+                View Details
+              </button>
+              <button
+                onClick={downloadMetadata}
+                disabled={downloading}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors disabled:opacity-50"
+              >
+                <Download size={16} />
+                {downloading ? "Downloading..." : "Download"}
+              </button>
+            </>
           )}
         </div>
       )}
@@ -375,6 +387,14 @@ export default function CallScreen({
         <p className="text-sm text-zinc-500">
           Duration: {Math.floor(duration / 60)}m {duration % 60}s
         </p>
+      )}
+
+      {showViewer && callId && (
+        <CallViewer
+          callId={callId}
+          onClose={() => setShowViewer(false)}
+          onDownload={downloadMetadata}
+        />
       )}
     </div>
   );
