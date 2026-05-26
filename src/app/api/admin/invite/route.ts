@@ -25,8 +25,10 @@ export async function POST(request: Request) {
       );
     }
 
+    const origin = request.headers.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "";
     const invitation = await clerk.invitations.createInvitation({
       emailAddress,
+      redirectUrl: `${origin}/sign-in`,
     });
 
     return NextResponse.json({ id: invitation.id, emailAddress });
