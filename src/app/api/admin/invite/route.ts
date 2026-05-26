@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.headers.get("origin") || "";
     const invitation = await clerk.invitations.createInvitation({
       emailAddress,
-      redirectUrl: `${appUrl}/sign-in`,
+      redirectUrl: `${appUrl}/sign-up`,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
 
