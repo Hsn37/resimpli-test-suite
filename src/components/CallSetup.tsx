@@ -137,6 +137,11 @@ export default function CallSetup({ agentName, onStartCall, onBack }: Props) {
       </div>
 
       {/* Preset + JSON row */}
+      <div className="shrink-0 flex items-center gap-2 mb-2">
+        <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+          Presets
+        </span>
+      </div>
       <div className="shrink-0 flex items-center gap-2 mb-4">
         <div className="relative flex-1">
           <select
@@ -149,7 +154,7 @@ export default function CallSetup({ agentName, onStartCall, onBack }: Props) {
             }}
             className="w-full appearance-none bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 pr-10 text-sm"
           >
-            <option value="">Load a preset...</option>
+            <option value="">Select a preset</option>
             {Object.entries(presetGroups).map(([group, presets]) => (
               <optgroup key={group} label={group}>
                 {presets.map((p) => (
