@@ -25,11 +25,12 @@ export async function POST(request: Request) {
       );
     }
 
-    const origin = request.headers.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "";
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.headers.get("origin") || "";
     const invitation = await clerk.invitations.createInvitation({
       emailAddress,
-      redirectUrl: `${origin}/sign-in`,
-    });
+      redirectUrl: `${appUrl}/sign-in`,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
 
     return NextResponse.json({ id: invitation.id, emailAddress });
   } catch (err: unknown) {
