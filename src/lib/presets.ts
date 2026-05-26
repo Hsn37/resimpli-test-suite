@@ -40,6 +40,12 @@ const SLOTS_PHONE =
 const SLOTS_IN_PERSON =
   "Friday, May 30th: 10 in the morning, 11 in the morning, 1 in the afternoon, 3 in the afternoon\nSaturday, May 31st: 9 in the morning, 10 in the morning, 11 in the morning, 1 in the afternoon\nMonday, June 2nd: 10 in the morning, 11 in the morning, 1 in the afternoon, 3 in the afternoon\nTuesday, June 3rd: 10 in the morning, 1 in the afternoon, 3 in the afternoon";
 
+const RESIDENTIAL_DISCOVERY_CSV =
+  "confirm_address,occupancy,condition,timeline,reason,price_expectation,mortgage_liens,decision_makers";
+
+const LAND_DISCOVERY_CSV =
+  "parcel_location,parcel_size_acreage,land_type_use,road_access_utilities,timeline,motivation,zoning_use,price_expectation,mortgage_liens,decision_makers";
+
 const BASE: Record<string, string> = {
   lead_id: "",
   Agent_Name: "Emily",
@@ -58,7 +64,7 @@ const BASE: Record<string, string> = {
   reason_status: "unknown",
   business_state: "LA",
   mortgage_value: "",
-  next_step_type: "phone_appointment",
+  next_step_type: "",
   phone_rep_name: "Marcus",
   timeline_value: "",
   today_date_iso: new Date().toLocaleDateString("en-US", {
@@ -103,8 +109,7 @@ const BASE: Record<string, string> = {
   deal_killers_concerns_value: "",
   phone_appointment_slots_spoken: SLOTS_PHONE,
   in_person_appointment_slots_spoken: SLOTS_IN_PERSON,
-  lead_qualification_res_selected_csv:
-    "confirmAddress,motivation,timeline,alternatives,condition,priceExpectation,occupancy,mortgageLiens,decisionMakers,dealKillers",
+  lead_qualification_res_selected_csv: RESIDENTIAL_DISCOVERY_CSV,
   lead_qualification_land_selected_csv: "",
   lead_qualification_property_type_focus: "residential",
   lead_qualification_auto_confirm_property_type: "true",
@@ -124,63 +129,44 @@ function preset(
   return { name, group, variables: { ...BASE, ...overrides } };
 }
 
-// Helper: all residential discovery fields marked Fresh
-const ALL_FRESH: Record<string, string> = {
-  occupancy_status: "Fresh",
-  occupancy_value: "vacant",
-  condition_status: "Fresh",
-  condition_value: "needs cosmetic work",
-  timeline_status: "Fresh",
-  timeline_value: "30 days",
-  reason_status: "Fresh",
-  reason_value: "downsizing",
-  price_status: "Fresh",
-  price_value: "180000",
-  mortgage_status: "Fresh",
-  mortgage_value: "free and clear",
-  decision_makers_status: "Fresh",
-  decision_makers_value: "sole owner",
-  deal_killers_concerns_value: "none",
-  alternatives_value: "not interested in listing",
-};
-
 export const VARIABLE_PRESETS: Preset[] = [
-  // ═══════════════════════════════════════════════════════════
-  // INBOUND
-  // ═══════════════════════════════════════════════════════════
-
-  // MASTER ROUTER → inbound_default → Default Opener
-  // Logic Split → else → Two-Minute Ask → Address Capture → full discovery → phone sched
-  preset("IB — Fresh (Default Opener)", "Inbound", {
+  // ─── INBOUND ───────────────────────────────────────────────
+  preset("INBOUND — Fresh Lead", "Inbound", {
     has_context: "false",
     property_address_full: "",
     property_address_stripped: "",
     greeting_mode: "default",
   }),
 
-  // MASTER ROUTER → inbound_custom → Custom Opener
-  // (human-recorded and human-no-disclosure also route here)
-  preset("IB — Fresh (Custom Opener)", "Inbound", {
+  preset("INBOUND — Custom Opener", "Inbound", {
     has_context: "false",
     greeting_mode: "custom",
     custom_greeting_script:
       "Hi, this is Sarah with 504 Home Buyers on a recorded line, how can I help you today?",
   }),
 
-  // Logic Split → addr exists + has_context → Returning With Address
-  // Discovery Router → all Fresh → skip → Gate Router → skip (deal_killers="none") → Exit Router → phone
-  preset("IB — Returning, All Fresh", "Inbound", {
+  preset("INBOUND — Returning All Fresh", "Inbound", {
     has_context: "true",
     property_address_full: "456 Pine Street, Metairie, LA 70005",
     property_address_stripped: "456 Pine Street, Metairie, LA 70005",
-    ...ALL_FRESH,
+    occupancy_status: "Fresh",
+    occupancy_value: "owner-occupied",
+    condition_status: "Fresh",
+    condition_value: "needs cosmetic work",
+    timeline_status: "Fresh",
+    timeline_value: "30 days",
+    reason_status: "Fresh",
+    reason_value: "downsizing",
+    price_status: "Fresh",
+    price_value: "180000",
+    mortgage_status: "Fresh",
+    mortgage_value: "free and clear",
+    decision_makers_status: "Fresh",
+    decision_makers_value: "sole owner",
     conversation_recency_bucket: "1-7",
-    last_call_summary:
-      "Seller called about Pine St. Owner-occupied, cosmetic work needed, wants 30 days. Downsizing. No mortgage. Sole owner. Thinking 180k.",
   }),
 
-  // Discovery Router → first unknown field (condition) → partial discovery → Gate Router → ask
-  preset("IB — Returning, Some Stale", "Inbound", {
+  preset("INBOUND — Returning Some Stale", "Inbound", {
     has_context: "true",
     property_address_full: "789 Elm Ave, Kenner, LA 70062",
     property_address_stripped: "789 Elm Ave, Kenner, LA 70062",
@@ -197,67 +183,9 @@ export const VARIABLE_PRESETS: Preset[] = [
     decision_makers_status: "Fresh",
     decision_makers_value: "sole owner",
     conversation_recency_bucket: "8-30",
-    last_call_summary:
-      "Inherited property on Elm Ave. Vacant. Free and clear. Thinking 120k. Condition and timeline not discussed.",
   }),
 
-  // Logic Split → no addr + has_context → Address Capture (with "I don't have an address on file" prompt)
-  preset("IB — Returning, No Address", "Inbound", {
-    has_context: "true",
-    property_address_full: "",
-    property_address_stripped: "",
-    conversation_recency_bucket: "1-7",
-    last_call_summary:
-      "Spoke recently but address was never captured.",
-  }),
-
-  // Logic Split → missed-call language (prompt) → Missed Call Fresh (address branch)
-  preset("IB — Missed Call, Has Address", "Inbound", {
-    has_context: "true",
-    property_address_full: "321 Maple Drive, Gretna, LA 70056",
-    property_address_stripped: "321 Maple Drive, Gretna, LA 70056",
-    conversation_recency_bucket: "1-7",
-  }),
-
-  // Missed Call Fresh → no address → "We buy homes directly from owners in the area"
-  preset("IB — Missed Call, No Address", "Inbound", {
-    has_context: "false",
-    property_address_full: "",
-    property_address_stripped: "",
-  }),
-
-  // Appt Router → has_appt (future date) → Appt Check convo
-  preset("IB — Future Appointment", "Inbound", {
-    has_context: "true",
-    property_address_full: "678 Prytania St, New Orleans, LA 70130",
-    property_address_stripped: "678 Prytania St, New Orleans, LA 70130",
-    upcoming_appointment_date: "2026-06-02",
-    upcoming_appointment_time: "14:00",
-    upcoming_appointment_type: "phone",
-    ...ALL_FRESH,
-    conversation_recency_bucket: "1-7",
-    last_call_summary:
-      "Has phone appointment Monday June 2nd at 2pm. Fully qualified.",
-  }),
-
-  // Appt Router → no_appt (past date) → Intent Check
-  preset("IB — Past Appointment", "Inbound", {
-    has_context: "true",
-    property_address_full: "222 Dauphine St, New Orleans, LA 70116",
-    property_address_stripped: "222 Dauphine St, New Orleans, LA 70116",
-    upcoming_appointment_date: "2026-05-14",
-    upcoming_appointment_time: "10:00",
-    upcoming_appointment_type: "phone",
-    occupancy_status: "Fresh",
-    occupancy_value: "owner-occupied",
-    conversation_recency_bucket: "8-30",
-    last_call_summary:
-      "Had phone appointment May 14th at 10am that already passed.",
-  }),
-
-  // Exit Router → next_step=offer_conversation → Offer node (offer_range present)
-  // NOTE: next_step must be "offer_conversation" to reach Offer; "phone_appointment" bypasses it
-  preset("IB — Offer Flow", "Inbound", {
+  preset("INBOUND — Dynamic Offer Enabled", "Inbound", {
     has_context: "true",
     property_address_full: "200 Bourbon Street, New Orleans, LA 70130",
     property_address_stripped: "200 Bourbon Street, New Orleans, LA 70130",
@@ -267,75 +195,182 @@ export const VARIABLE_PRESETS: Preset[] = [
     offer_range_spoken:
       "one hundred fifty thousand to one hundred seventy thousand",
     offer_already_delivered: "false",
-    ...ALL_FRESH,
+    occupancy_status: "Fresh",
+    occupancy_value: "vacant",
+    condition_status: "Fresh",
+    condition_value: "needs major renovation",
+    timeline_status: "Fresh",
+    timeline_value: "ASAP",
+    reason_status: "Fresh",
+    reason_value: "inherited, tired of maintaining",
+    price_status: "Fresh",
+    price_value: "160000",
+    mortgage_status: "Fresh",
+    mortgage_value: "free and clear",
+    decision_makers_status: "Fresh",
+    decision_makers_value: "sole owner",
     conversation_recency_bucket: "1-7",
-    last_call_summary:
-      "Returning caller on Bourbon St. Fully qualified. Offer range ready: 150-170k.",
   }),
 
-  // Exit Router → next_step=in_person_walkthrough → In-Person Scheduling
-  preset("IB — In-Person Scheduling", "Inbound", {
+  preset("INBOUND — Dynamic Offer Disabled", "Inbound", {
+    has_context: "true",
+    property_address_full: "555 Magazine Street, New Orleans, LA 70130",
+    property_address_stripped: "555 Magazine Street, New Orleans, LA 70130",
+    dynamic_offer_enabled: "false",
+    offer_range_spoken: "",
+    occupancy_status: "Fresh",
+    occupancy_value: "owner-occupied",
+    condition_status: "Fresh",
+    condition_value: "fair",
+    timeline_status: "Fresh",
+    timeline_value: "60 days",
+    reason_status: "Fresh",
+    reason_value: "relocating",
+    price_status: "unknown",
+    mortgage_status: "Fresh",
+    mortgage_value: "85000 remaining",
+    decision_makers_status: "Fresh",
+    decision_makers_value: "spouse",
+    conversation_recency_bucket: "1-7",
+  }),
+
+  preset("INBOUND — Phone Schedule Ready", "Inbound", {
+    has_context: "true",
+    property_address_full: "901 St Charles Ave, New Orleans, LA 70130",
+    property_address_stripped: "901 St Charles Ave, New Orleans, LA 70130",
+    occupancy_status: "Fresh",
+    occupancy_value: "vacant",
+    condition_status: "Fresh",
+    condition_value: "needs work",
+    timeline_status: "Fresh",
+    timeline_value: "30 days",
+    reason_status: "Fresh",
+    reason_value: "inherited",
+    price_status: "Fresh",
+    price_value: "200000",
+    mortgage_status: "Fresh",
+    mortgage_value: "free and clear",
+    decision_makers_status: "Fresh",
+    decision_makers_value: "sole owner",
+    conversation_recency_bucket: "1-7",
+    next_step_type: "phone_appointment",
+  }),
+
+  preset("INBOUND — Prior Offer Exists", "Inbound", {
+    has_context: "true",
+    property_address_full: "345 Tchoupitoulas St, New Orleans, LA 70130",
+    property_address_stripped: "345 Tchoupitoulas St, New Orleans, LA 70130",
+    last_offer_amount: "one hundred eighty-five thousand dollars",
+    last_offer_date: "April fifteenth",
+    occupancy_status: "Fresh",
+    occupancy_value: "owner-occupied",
+    condition_status: "Fresh",
+    condition_value: "good shape",
+    conversation_recency_bucket: "8-30",
+  }),
+
+  preset("INBOUND — Existing Appt", "Inbound", {
+    has_context: "true",
+    property_address_full: "678 Prytania St, New Orleans, LA 70130",
+    property_address_stripped: "678 Prytania St, New Orleans, LA 70130",
+    upcoming_appointment_date: "2026-06-05",
+    upcoming_appointment_time: "14:00",
+    upcoming_appointment_type: "phone",
+    occupancy_status: "Fresh",
+    occupancy_value: "vacant",
+    condition_status: "Fresh",
+    condition_value: "needs cosmetic work",
+    conversation_recency_bucket: "1-7",
+  }),
+
+  preset("INBOUND — Past Appt", "Inbound", {
+    has_context: "true",
+    property_address_full: "222 Dauphine St, New Orleans, LA 70116",
+    property_address_stripped: "222 Dauphine St, New Orleans, LA 70116",
+    upcoming_appointment_date: "2026-05-14",
+    upcoming_appointment_time: "10:00",
+    upcoming_appointment_type: "phone",
+    occupancy_status: "Fresh",
+    occupancy_value: "owner-occupied",
+    conversation_recency_bucket: "8-30",
+  }),
+
+  preset("INBOUND — Tenant Occupied", "Inbound", {
+    has_context: "true",
+    property_address_full: "444 Frenchmen St, New Orleans, LA 70116",
+    property_address_stripped: "444 Frenchmen St, New Orleans, LA 70116",
+    occupancy_status: "unknown",
+    condition_status: "Fresh",
+    condition_value: "fair, older roof",
+    reason_status: "Fresh",
+    reason_value: "tired landlord",
+    conversation_recency_bucket: "8-30",
+  }),
+
+  preset("INBOUND — Land Property", "Inbound", {
+    has_context: "false",
+    property_type: "land",
+    lead_qualification_property_type_focus: "land",
+    lead_qualification_res_selected_csv: "",
+    lead_qualification_land_selected_csv: LAND_DISCOVERY_CSV,
+    lead_qualification_auto_confirm_property_type: "false",
+  }),
+
+  preset("INBOUND — In-Person Scheduling", "Inbound", {
     has_context: "true",
     property_address_full: "901 St Charles Ave, New Orleans, LA 70130",
     property_address_stripped: "901 St Charles Ave, New Orleans, LA 70130",
     next_step_type: "in_person_walkthrough",
-    interested_primary_action: "in_person_walkthrough",
-    ...ALL_FRESH,
+    occupancy_status: "Fresh",
+    occupancy_value: "vacant",
+    condition_status: "Fresh",
+    condition_value: "needs work",
+    timeline_status: "Fresh",
+    timeline_value: "30 days",
+    reason_status: "Fresh",
+    reason_value: "inherited",
+    price_status: "Fresh",
+    price_value: "200000",
+    mortgage_status: "Fresh",
+    mortgage_value: "free and clear",
+    decision_makers_status: "Fresh",
+    decision_makers_value: "sole owner",
     conversation_recency_bucket: "1-7",
-    last_call_summary:
-      "Fully qualified on St Charles Ave. Ready for in-person walkthrough.",
   }),
 
-  // Exit Router → next_step=callback → Callback Capture (ask for time)
-  preset("IB — Callback", "Inbound", {
+  preset("INBOUND — Callback", "Inbound", {
     has_context: "true",
     property_address_full: "901 St Charles Ave, New Orleans, LA 70130",
     property_address_stripped: "901 St Charles Ave, New Orleans, LA 70130",
     next_step_type: "callback",
     callback_ask_for_time: "true",
-    ...ALL_FRESH,
+    occupancy_status: "Fresh",
+    occupancy_value: "owner-occupied",
+    condition_status: "Fresh",
+    condition_value: "fair",
+    timeline_status: "Fresh",
+    timeline_value: "60 days",
+    reason_status: "Fresh",
+    reason_value: "downsizing",
+    price_status: "Fresh",
+    price_value: "150000",
+    mortgage_status: "Fresh",
+    mortgage_value: "free and clear",
+    decision_makers_status: "Fresh",
+    decision_makers_value: "sole owner",
     conversation_recency_bucket: "1-7",
-    last_call_summary: "Qualified lead. Routing to callback.",
   }),
 
-  // Exit Router → next_step=send_booking_link → Callback Capture (booking link variant)
-  preset("IB — Booking Link", "Inbound", {
+  // ─── OUTBOUND ──────────────────────────────────────────────
+  preset("OUTBOUND — Fresh", "Outbound", {
     has_context: "true",
-    property_address_full: "901 St Charles Ave, New Orleans, LA 70130",
-    property_address_stripped: "901 St Charles Ave, New Orleans, LA 70130",
-    next_step_type: "send_booking_link",
-    booking_link_url: "https://calendly.com/504homebuyers/call",
-    ...ALL_FRESH,
-    conversation_recency_bucket: "1-7",
-    last_call_summary: "Qualified lead. Sending booking link.",
+    property_address_full: "200 Bourbon Street, New Orleans, LA 70130",
+    property_address_stripped: "200 Bourbon Street, New Orleans, LA 70130",
+    conversation_recency_bucket: "",
+    greeting_mode: "default",
   }),
 
-  // zip_in_area=false → Out of Area handling
-  preset("IB — Out of Area", "Inbound", {
-    has_context: "false",
-    zip_in_area: "false",
-    property_zip: "90210",
-    property_address_full: "123 Beverly Dr, Beverly Hills, CA 90210",
-    property_address_stripped: "123 Beverly Dr, Beverly Hills, CA 90210",
-  }),
-
-  // property_type=land → different qualification CSV, land-specific discovery fields
-  preset("IB — Land Property", "Inbound", {
-    has_context: "false",
-    property_type: "land",
-    lead_qualification_property_type_focus: "land",
-    lead_qualification_res_selected_csv: "",
-    lead_qualification_land_selected_csv:
-      "parcel_location,parcel_size_acreage,land_type_use,road_access_utilities,timeline,motivation,zoning_use,price_expectation,mortgage_liens,decision_makers",
-    lead_qualification_auto_confirm_property_type: "false",
-  }),
-
-  // ═══════════════════════════════════════════════════════════
-  // OUTBOUND FOLLOW-UP
-  // ═══════════════════════════════════════════════════════════
-
-  // MASTER ROUTER → outbound_default → Outbound Default Opener (recent tier)
-  preset("OB — Recent Followup", "Outbound", {
+  preset("OUTBOUND — Recent Followup", "Outbound", {
     has_context: "true",
     property_address_full: "350 Royal Street, New Orleans, LA 70130",
     property_address_stripped: "350 Royal Street, New Orleans, LA 70130",
@@ -343,13 +378,10 @@ export const VARIABLE_PRESETS: Preset[] = [
     occupancy_value: "vacant",
     condition_status: "unknown",
     conversation_recency_bucket: "1-7",
-    last_call_summary:
-      "Spoke 3 days ago about Royal St. Vacant property. Condition not discussed.",
     greeting_mode: "default",
   }),
 
-  // Outbound Default Opener → long gap tier (different opening language)
-  preset("OB — Long Gap", "Outbound", {
+  preset("OUTBOUND — Long Gap", "Outbound", {
     has_context: "true",
     property_address_full: "888 Canal Street, New Orleans, LA 70112",
     property_address_stripped: "888 Canal Street, New Orleans, LA 70112",
@@ -358,28 +390,20 @@ export const VARIABLE_PRESETS: Preset[] = [
     condition_status: "Fresh",
     condition_value: "fair",
     conversation_recency_bucket: "31+",
-    last_call_summary:
-      "Last spoke over a month ago about Canal St. Owner-occupied, fair condition. On the fence.",
     greeting_mode: "default",
   }),
 
-  // MASTER ROUTER → outbound_custom → Outbound Custom Opener
-  preset("OB — Custom Opener", "Outbound", {
+  preset("OUTBOUND — Custom Opener", "Outbound", {
     has_context: "true",
     property_address_full: "350 Royal Street, New Orleans, LA 70130",
     property_address_stripped: "350 Royal Street, New Orleans, LA 70130",
     conversation_recency_bucket: "1-7",
-    last_call_summary: "Recent followup on Royal St.",
     greeting_mode: "custom",
     custom_greeting_script:
       "Hey, this is Sarah with 504 Home Buyers. I'm circling back about the property on Royal Street — do you have a quick minute?",
   }),
 
-  // ═══════════════════════════════════════════════════════════
-  // SPEED TO LEAD
-  // ═══════════════════════════════════════════════════════════
-
-  // MASTER ROUTER → stl_default → STL Default Opener
+  // ─── SPEED TO LEAD ────────────────────────────────────────
   preset("STL — Default", "Speed to Lead", {
     has_context: "true",
     property_address_full: "555 Canal Street, New Orleans, LA 70130",
@@ -387,7 +411,6 @@ export const VARIABLE_PRESETS: Preset[] = [
     greeting_mode: "default",
   }),
 
-  // MASTER ROUTER → stl_custom → STL Custom Opener
   preset("STL — Custom", "Speed to Lead", {
     has_context: "true",
     property_address_full: "555 Canal Street, New Orleans, LA 70130",
