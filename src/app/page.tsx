@@ -52,7 +52,6 @@ function AppContent() {
   }
 
   function handleCallBack() {
-    setCallConfig(null);
     setHistoryKey((k) => k + 1);
     setScreen("call-setup");
   }
@@ -160,6 +159,8 @@ function AppContent() {
             agentName={agentName}
             onStartCall={handleStartCall}
             onBack={() => setScreen("agent-select")}
+            initialMode={callConfig?.mode}
+            initialVariables={callConfig?.variables}
           />
         )}
         {screen === "call" && callConfig && (

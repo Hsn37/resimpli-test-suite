@@ -37,13 +37,15 @@ interface Props {
   agentName: string;
   onStartCall: (mode: CallMode, variables: Record<string, string>) => void;
   onBack: () => void;
+  initialMode?: CallMode;
+  initialVariables?: Record<string, string>;
 }
 
-export default function CallSetup({ agentName, onStartCall, onBack }: Props) {
-  const [mode, setMode] = useState<CallMode>("inbound");
-  const [variables, setVariables] = useState<Record<string, string>>({
-    call_type: CALL_MODES.inbound.callType,
-  });
+export default function CallSetup({ agentName, onStartCall, onBack, initialMode, initialVariables }: Props) {
+  const [mode, setMode] = useState<CallMode>(initialMode ?? "inbound");
+  const [variables, setVariables] = useState<Record<string, string>>(
+    initialVariables ?? { call_type: CALL_MODES.inbound.callType }
+  );
   const [activePreset, setActivePreset] = useState<string | null>(null);
 
   const presetGroups = useMemo(() => {
