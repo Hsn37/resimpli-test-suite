@@ -97,6 +97,7 @@ export default function CallScreen({
           version,
           dynamic_variables: variables,
           metadata: { mode, agent_name: agentName },
+          first_speaker: modeConfig.firstSpeaker,
         }),
       });
 

@@ -44,6 +44,9 @@ export async function createWebCall(body: {
   agent_id: string;
   retell_llm_dynamic_variables?: Record<string, string>;
   metadata?: Record<string, string>;
+  agent_override?: {
+    conversation_flow?: { start_speaker?: "agent" | "user" };
+  };
 }) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/create-web-call`, {
     method: "POST",
