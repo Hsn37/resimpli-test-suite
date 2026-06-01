@@ -170,6 +170,7 @@ function AppContent() {
             version={callConfig.version}
             mode={callConfig.mode}
             variables={callConfig.variables}
+            userEmail={user?.emailAddresses[0]?.emailAddress ?? ""}
             onBack={handleCallBack}
           />
         )}
