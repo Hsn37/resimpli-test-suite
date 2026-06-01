@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Clock, Download, Trash2, Eye, Pencil, Check, X } from "lucide-react";
-import { getCallHistory, clearCallHistory, updateCallRecord, type CallRecord } from "@/lib/callHistory";
+import { getCallHistory, clearCallHistory, deleteCallRecord, updateCallRecord, type CallRecord } from "@/lib/callHistory";
 import { patchCallGrade } from "@/lib/sheet";
 import { useToast } from "./Toast";
 import CallViewer from "./CallViewer";
@@ -28,6 +28,14 @@ export default function CallHistory({ onDownload }: Props) {
     clearCallHistory();
     setHistory([]);
     toast("Call history cleared", "info");
+  }
+
+  function handleDelete(callId: string) {
+    deleteCallRecord(callId);
+    setHistory(getCallHistory());
+    if (viewingCallId === callId) setViewingCallId(null);
+    if (editingCallId === callId) setEditingCallId(null);
+    toast("Call removed", "info");
   }
 
   function startEdit(record: CallRecord) {
@@ -118,6 +126,16 @@ export default function CallHistory({ onDownload }: Props) {
                 )}
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(record.callId);
+                  }}
+                  className="text-zinc-400 hover:text-red-500 transition-colors"
+                  title="Delete call"
+                >
+                  <Trash2 size={14} />
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

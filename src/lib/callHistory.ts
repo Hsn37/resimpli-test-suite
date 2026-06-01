@@ -35,6 +35,11 @@ export function updateCallRecord(callId: string, updates: Pick<CallRecord, "grad
   localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
 }
 
+export function deleteCallRecord(callId: string): void {
+  const history = getCallHistory().filter((r) => r.callId !== callId);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+}
+
 export function clearCallHistory(): void {
   localStorage.removeItem(STORAGE_KEY);
 }

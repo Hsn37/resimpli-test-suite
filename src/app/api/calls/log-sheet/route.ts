@@ -54,10 +54,10 @@ export async function POST(req: NextRequest) {
   }
 
   const time = new Date(timestamp).toLocaleString("en-US", {
-    timeZone: "America/Los_Angeles",
+    timeZone: "UTC",
     dateStyle: "short",
     timeStyle: "short",
-  });
+  }) + " UTC";
 
   const agentStr = version ? `${agentName} (v${version})` : agentName;
   const variablesStr = variables
