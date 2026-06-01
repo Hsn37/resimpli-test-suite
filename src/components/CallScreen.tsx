@@ -14,11 +14,13 @@ import {
 } from "lucide-react";
 import { RetellWebClient } from "retell-client-js-sdk";
 import { CALL_MODES, type CallMode } from "@/lib/presets";
-import { addCallRecord } from "@/lib/callHistory";
+import { addCallRecord, updateCallRecord } from "@/lib/callHistory";
+import { logCallToSheet, patchCallGrade } from "@/lib/sheet";
 import { startRinging, stopRinging } from "@/lib/ringTone";
 import { useToast } from "./Toast";
 import CallTimer from "./CallTimer";
 import CallViewer from "./CallViewer";
+import Stars from "./Stars";
 
 type CallPhase = "mic-check" | "ringing" | "connected" | "ended";
 
@@ -28,6 +30,7 @@ interface Props {
   version?: number;
   mode: CallMode;
   variables: Record<string, string>;
+  userEmail: string;
   onBack: () => void;
 }
 
@@ -37,6 +40,7 @@ export default function CallScreen({
   version,
   mode,
   variables,
+  userEmail,
   onBack,
 }: Props) {
   const [phase, setPhase] = useState<CallPhase>("mic-check");
@@ -50,12 +54,15 @@ export default function CallScreen({
   const [downloading, setDownloading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [showViewer, setShowViewer] = useState(false);
+  const [grade, setGrade] = useState<number>(0);
+  const [note, setNote] = useState("");
 
   const clientRef = useRef<RetellWebClient | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const connectingRef = useRef(false);
   const callIdRef = useRef<string | null>(null);
   const endedRef = useRef(false);
+  const syncedGradeRef = useRef(false);
   const { toast } = useToast();
 
   const modeConfig = CALL_MODES[mode];
@@ -72,17 +79,29 @@ export default function CallScreen({
     const dur = st ? Math.floor((Date.now() - st) / 1000) : 0;
     setDuration(dur);
     if (callIdRef.current) {
+      const now = Date.now();
       addCallRecord({
         callId: callIdRef.current,
         agentId,
         agentName,
         mode: modeConfig.label,
-        timestamp: Date.now(),
+        timestamp: now,
         duration: dur,
+      });
+      // Log the row as soon as the call ends so capture never depends on the
+      // user clicking "New Call". Grade/note are added later via PATCH.
+      logCallToSheet({
+        callId: callIdRef.current,
+        agentName,
+        version,
+        direction: modeConfig.label,
+        variables,
+        user: userEmail,
+        timestamp: now,
       });
     }
     setPhase("ended");
-  }, [agentId, agentName, modeConfig.label]);
+  }, [agentId, agentName, version, variables, userEmail, modeConfig.label]);
 
   const startCall = useCallback(async () => {
     if (connectingRef.current) return;
@@ -188,6 +207,15 @@ export default function CallScreen({
     return () => stopRinging();
   }, [phase, isOutbound, startCall]);
 
+  function handleBack() {
+    // Flush any pending grade/note to the sheet before leaving, in case the
+    // debounced sync (below) hasn't fired yet.
+    if (callIdRef.current && (grade || note.trim())) {
+      patchCallGrade(callIdRef.current, grade || undefined, note.trim() || undefined);
+    }
+    onBack();
+  }
+
   function handlePickup() {
     stopRinging();
     startCall();
@@ -209,6 +237,23 @@ export default function CallScreen({
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
+
+  // Auto-save grade/note whenever they change after the call ends.
+  // localStorage saves immediately; the sheet sync is debounced so typing a
+  // note doesn't fire a request per keystroke.
+  useEffect(() => {
+    if (phase !== "ended" || !callIdRef.current) return;
+    const id = callIdRef.current;
+    const g = grade || undefined;
+    const n = note.trim() || undefined;
+    updateCallRecord(id, { grade: g, note: n });
+    // Skip the no-op sheet write on the initial transition (nothing entered
+    // yet), but once anything has been synced keep syncing — including clears.
+    if (!g && !n && !syncedGradeRef.current) return;
+    syncedGradeRef.current = true;
+    const t = setTimeout(() => patchCallGrade(id, g, n), 1000);
+    return () => clearTimeout(t);
+  }, [grade, note, phase]);
 
   async function downloadMetadata() {
     if (!callId) return;
@@ -352,11 +397,26 @@ export default function CallScreen({
         </div>
       )}
 
+      {/* Post-call grade + note */}
+      {phase === "ended" && callId && (
+        <div className="w-full max-w-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-3">
+          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Rate this call</p>
+          <Stars value={grade} size={22} onChange={setGrade} />
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Add a note about this call..."
+            rows={2}
+            className="w-full text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
+          />
+        </div>
+      )}
+
       {/* Post-call actions */}
       {phase === "ended" && (
         <div className="flex items-center gap-3">
           <button
-            onClick={onBack}
+            onClick={handleBack}
             className="flex items-center gap-2 px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
           >
             <ArrowLeft size={16} />

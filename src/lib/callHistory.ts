@@ -5,6 +5,8 @@ export interface CallRecord {
   mode: string;
   timestamp: number;
   duration: number;
+  grade?: number; // 1-5
+  note?: string;
 }
 
 const STORAGE_KEY = "resimpli-call-history";
@@ -22,6 +24,14 @@ export function addCallRecord(record: CallRecord): void {
   const history = getCallHistory();
   history.unshift(record);
   if (history.length > 100) history.length = 100;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+}
+
+export function updateCallRecord(callId: string, updates: Pick<CallRecord, "grade" | "note">): void {
+  const history = getCallHistory();
+  const idx = history.findIndex((r) => r.callId === callId);
+  if (idx === -1) return;
+  history[idx] = { ...history[idx], ...updates };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
 }
 
