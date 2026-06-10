@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { UserButton, useUser } from "@clerk/nextjs";
-import { Settings, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Settings, PanelLeftClose, PanelLeftOpen, Phone } from "lucide-react";
 import Link from "next/link";
 import { ToastProvider, useToast } from "@/components/Toast";
 import AgentSelect from "@/components/AgentSelect";
@@ -110,6 +110,13 @@ function AppContent() {
                 </button>
               </div>
             </div>
+            <Link
+              href="/calls"
+              className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
+            >
+              <Phone size={16} />
+              View All Calls
+            </Link>
             <CallHistory key={historyKey} onDownload={handleDownload} />
           </>
         ) : (
@@ -121,6 +128,13 @@ function AppContent() {
               <PanelLeftOpen size={18} />
             </button>
             <UserButton />
+            <Link
+              href="/calls"
+              className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+              title="Calls"
+            >
+              <Phone size={16} />
+            </Link>
             {isAdmin && (
               <Link
                 href="/admin"
@@ -139,6 +153,13 @@ function AppContent() {
         <div className="flex items-center justify-between mb-6 md:hidden">
           <h1 className="font-semibold">Resimpli Test Suite</h1>
           <div className="flex items-center gap-2">
+            <Link
+              href="/calls"
+              className="text-zinc-400 hover:text-zinc-600 transition-colors"
+              title="Calls"
+            >
+              <Phone size={16} />
+            </Link>
             {isAdmin && (
               <Link
                 href="/admin"
