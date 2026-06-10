@@ -8,7 +8,7 @@ import CallDetailBody, {
   CALL_DETAIL_TABS,
   type CallDetailTab,
 } from "@/components/CallDetailBody";
-import { downloadRecording } from "@/lib/downloadRecording";
+import { downloadJson, downloadRecording } from "@/lib/downloadRecording";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -40,15 +40,7 @@ function ShareContent({ callId }: { callId: string }) {
 
   function handleDownload() {
     if (!data) return;
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${callId}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadJson(data, `${callId}.json`);
   }
 
   const recordingUrl = data?.recording_url as string | undefined;

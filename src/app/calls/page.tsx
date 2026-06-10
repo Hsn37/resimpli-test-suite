@@ -21,7 +21,7 @@ import {
 import { ToastProvider, useToast } from "@/components/Toast";
 import AudioPlayer from "@/components/AudioPlayer";
 import CallViewer from "@/components/CallViewer";
-import { downloadRecording } from "@/lib/downloadRecording";
+import { downloadJson, downloadRecording } from "@/lib/downloadRecording";
 
 interface RetellCall {
   call_id: string;
@@ -213,15 +213,7 @@ function CallsContent() {
       const res = await fetch(`/api/calls/${callId}`);
       if (!res.ok) throw new Error("Failed to fetch call data");
       const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${callId}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadJson(data, `${callId}.json`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Download failed";
       toast(message, "error");
