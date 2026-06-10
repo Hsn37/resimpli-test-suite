@@ -60,6 +60,23 @@ export async function createWebCall(body: {
   return res.json();
 }
 
+export async function listCalls(body: {
+  limit?: number;
+  pagination_key?: string;
+} = {}) {
+  const res = await fetch(`${RETELL_BASE_URL}/v2/list-calls`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({
+      sort_order: "descending",
+      limit: body.limit ?? 50,
+      ...(body.pagination_key ? { pagination_key: body.pagination_key } : {}),
+    }),
+  });
+  if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
+  return res.json();
+}
+
 export async function getCall(callId: string) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/get-call/${callId}`, {
     method: "GET",

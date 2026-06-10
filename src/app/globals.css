@@ -16,6 +16,7 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --track-bg: #3f3f46;
   }
 }
 
@@ -98,4 +99,33 @@ body {
 
 .animate-bounce-slow {
   animation: bounce-slow 2s ease-in-out infinite;
+}
+
+/* Audio player seek bar */
+input[type="range"].accent-blue-600::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: rgb(37 99 235);
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+input[type="range"].accent-blue-600::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: rgb(37 99 235);
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+input[type="range"].accent-blue-600 {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
 }
