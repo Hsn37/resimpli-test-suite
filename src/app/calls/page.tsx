@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -21,6 +21,7 @@ import {
 import { ToastProvider, useToast } from "@/components/Toast";
 import AudioPlayer from "@/components/AudioPlayer";
 import CallViewer from "@/components/CallViewer";
+import Stars from "@/components/Stars";
 import { downloadJson, downloadRecording } from "@/lib/downloadRecording";
 
 interface RetellCall {
@@ -35,7 +36,15 @@ interface RetellCall {
   call_status?: string;
   from_number?: string;
   to_number?: string;
+  grade?: number | null;
+  note?: string | null;
+  user_email?: string | null;
 }
+
+type SortKey = "newest" | "rating-desc" | "rating-asc";
+
+// Number of <td> columns in a CallRow (used by the expanded audio row's colSpan).
+const TABLE_COLSPAN = 8;
 
 const STATUS_STYLES: Record<string, string> = {
   ended: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
@@ -56,7 +65,24 @@ function CallRow({
   onViewDetails: () => void;
 }) {
   const [shared, setShared] = useState(false);
+  const [noteExpanded, setNoteExpanded] = useState(false);
+  const [noteTruncated, setNoteTruncated] = useState(false);
+  const noteRef = useRef<HTMLSpanElement>(null);
   const { toast } = useToast();
+
+  // Detect whether the collapsed note actually overflows, so we only offer
+  // "View full note" when there's something hidden. A ResizeObserver measures
+  // after the table has laid out (a plain effect can run too early) and again
+  // whenever the column width changes.
+  useEffect(() => {
+    if (noteExpanded) return;
+    const el = noteRef.current;
+    if (!el) return;
+    const check = () => setNoteTruncated(el.scrollWidth > el.clientWidth + 1);
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [call.note, noteExpanded]);
 
   const duration =
     call.start_timestamp && call.end_timestamp
@@ -136,13 +162,67 @@ function CallRow({
             : "—"}
         </td>
         <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
-          {call.from_number || call.to_number ? (
-            <>
-              {call.from_number ?? "—"} <span className="text-zinc-400">&rarr;</span>{" "}
-              {call.to_number ?? "—"}
-            </>
+          {call.user_email ? (
+            <span className="truncate inline-block max-w-[160px] align-bottom" title={call.user_email}>
+              {call.user_email}
+            </span>
           ) : (
-            "—"
+            // No app user — call originated inside Retell, not from our tool.
+            <span className="text-zinc-400 dark:text-zinc-500">Retell</span>
+          )}
+        </td>
+        <td className="py-3 px-3 whitespace-nowrap">
+          {call.grade ? (
+            <Stars value={call.grade} size={13} emptyClass="text-zinc-200 dark:text-zinc-700" />
+          ) : (
+            <span className="text-zinc-300 dark:text-zinc-600">—</span>
+          )}
+        </td>
+        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400">
+          {call.note ? (
+            noteExpanded ? (
+              <div className="w-[200px]">
+                <span className="block italic whitespace-pre-wrap break-words">
+                  {call.note}
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setNoteExpanded(false);
+                  }}
+                  className="mt-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  Show less
+                </button>
+              </div>
+            ) : (
+              <div
+                onClick={(e) => {
+                  if (!noteTruncated) return;
+                  e.stopPropagation();
+                  setNoteExpanded(true);
+                }}
+                className={`group relative max-w-[200px] ${
+                  noteTruncated ? "cursor-pointer" : ""
+                }`}
+              >
+                <span
+                  ref={noteRef}
+                  className={`block truncate italic ${
+                    noteTruncated ? "group-hover:invisible" : ""
+                  }`}
+                >
+                  {call.note}
+                </span>
+                {noteTruncated && (
+                  <span className="absolute inset-0 hidden items-center text-xs not-italic font-medium text-blue-600 dark:text-blue-400 group-hover:flex">
+                    View full note
+                  </span>
+                )}
+              </div>
+            )
+          ) : (
+            <span className="text-zinc-300 dark:text-zinc-600">—</span>
           )}
         </td>
         <td
@@ -185,7 +265,7 @@ function CallRow({
           className="bg-blue-50/60 dark:bg-blue-950/20"
           onClick={(e) => e.stopPropagation()}
         >
-          <td colSpan={6} className="px-4 pb-3">
+          <td colSpan={TABLE_COLSPAN} className="px-4 pb-3">
             <AudioPlayer src={call.recording_url} onEnded={onTogglePlay} />
           </td>
         </tr>
@@ -204,6 +284,8 @@ function CallsContent() {
   // pageCursors[i] = pagination_key to fetch page i+2 (i.e. cursor at the end of page i+1)
   const [pageCursors, setPageCursors] = useState<string[]>([]);
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortKey>("newest");
+  const [userFilter, setUserFilter] = useState<string>("all");
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
   const [viewingCallId, setViewingCallId] = useState<string | null>(null);
   const { toast } = useToast();
@@ -238,6 +320,7 @@ function CallsContent() {
       .then((data) => {
         const list: RetellCall[] = Array.isArray(data) ? data : data.calls ?? [];
         setCalls(list);
+        setUserFilter("all");
         setHasNext(list.length === PAGE_SIZE);
         if (list.length === PAGE_SIZE) {
           const lastCallId = list[list.length - 1].call_id;
@@ -253,22 +336,50 @@ function CallsContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
 
+  // Distinct users present on the current page (calls placed from this tool).
+  const users = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of calls) if (c.user_email) set.add(c.user_email);
+    return Array.from(set).sort();
+  }, [calls]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return calls;
-    return calls.filter(
-      (c) =>
+    let result = calls.filter((c) => {
+      if (userFilter !== "all" && c.user_email !== userFilter) return false;
+      if (!q) return true;
+      return (
         c.call_id.toLowerCase().includes(q) ||
         c.agent_id?.toLowerCase().includes(q) ||
         c.agent_name?.toLowerCase().includes(q) ||
         c.call_type?.toLowerCase().includes(q) ||
         c.from_number?.toLowerCase().includes(q) ||
-        c.to_number?.toLowerCase().includes(q)
-    );
-  }, [calls, search]);
+        c.to_number?.toLowerCase().includes(q) ||
+        c.user_email?.toLowerCase().includes(q) ||
+        c.note?.toLowerCase().includes(q)
+      );
+    });
+
+    if (sort !== "newest") {
+      // Ungraded calls sort to the bottom in both rating directions.
+      const dir = sort === "rating-desc" ? -1 : 1;
+      result = [...result].sort((a, b) => {
+        const ga = a.grade ?? null;
+        const gb = b.grade ?? null;
+        if (ga === null && gb === null) return 0;
+        if (ga === null) return 1;
+        if (gb === null) return -1;
+        return (ga - gb) * dir;
+      });
+    }
+
+    return result;
+  }, [calls, search, userFilter, sort]);
+
+  const isFiltering = search.trim() !== "" || userFilter !== "all" || sort !== "newest";
 
   return (
-    <div className="max-w-6xl mx-auto p-8">
+    <div className="max-w-7xl mx-auto p-8">
       <div className="flex items-center gap-3 mb-6">
         <Link
           href="/"
@@ -282,33 +393,64 @@ function CallsContent() {
         </h1>
         {!loading && (
           <span className="text-xs text-zinc-400">
-            {search
+            {isFiltering
               ? `${filtered.length} of ${calls.length} on this page`
               : `Page ${page}`}
           </span>
         )}
       </div>
 
-      <div className="relative mb-4 max-w-md">
-        <Search
-          size={15}
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
-        />
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by call ID, agent, type, or number..."
-          className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-9 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
-        />
-        {search && (
-          <button
-            onClick={() => setSearch("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
+          <Search
+            size={15}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
+          />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by call ID, agent, type, number, or note..."
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-9 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+            >
+              <X size={15} />
+            </button>
+          )}
+        </div>
+
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-zinc-500">User</span>
+          <select
+            value={userFilter}
+            onChange={(e) => setUserFilter(e.target.value)}
+            className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]"
           >
-            <X size={15} />
-          </button>
-        )}
+            <option value="all">All users</option>
+            {users.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-zinc-500">Sort</span>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="newest">Newest first</option>
+            <option value="rating-desc">Rating: high to low</option>
+            <option value="rating-asc">Rating: low to high</option>
+          </select>
+        </label>
       </div>
 
       {loading ? (
@@ -317,7 +459,7 @@ function CallsContent() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-8 text-zinc-500 text-sm">
-          {calls.length === 0 ? "No calls yet." : "No calls match your search."}
+          {calls.length === 0 ? "No calls yet." : "No calls match your filters."}
         </div>
       ) : (
         <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden overflow-x-auto">
@@ -328,7 +470,9 @@ function CallsContent() {
                 <th className="py-2.5 px-3 font-medium">Call</th>
                 <th className="py-2.5 px-3 font-medium">Time</th>
                 <th className="py-2.5 px-3 font-medium">Duration</th>
-                <th className="py-2.5 px-3 font-medium">Numbers</th>
+                <th className="py-2.5 px-3 font-medium">User</th>
+                <th className="py-2.5 px-3 font-medium">Rating</th>
+                <th className="py-2.5 px-3 font-medium">Note</th>
                 <th className="py-2.5 pl-3 pr-4 font-medium text-right">Actions</th>
               </tr>
             </thead>
@@ -351,7 +495,7 @@ function CallsContent() {
         </div>
       )}
 
-      {!loading && !search && (calls.length > 0 || page > 1) && (
+      {!loading && !search && userFilter === "all" && (calls.length > 0 || page > 1) && (
         <div className="flex items-center justify-center gap-3 mt-4">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}

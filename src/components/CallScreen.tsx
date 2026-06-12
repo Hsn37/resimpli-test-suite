@@ -15,7 +15,7 @@ import {
 import { RetellWebClient } from "retell-client-js-sdk";
 import { CALL_MODES, type CallMode } from "@/lib/presets";
 import { addCallRecord, updateCallRecord } from "@/lib/callHistory";
-import { logCallToSheet, patchCallGrade } from "@/lib/sheet";
+import { logCall, patchCallGrade } from "@/lib/callLog";
 import { startRinging, stopRinging } from "@/lib/ringTone";
 import { useToast } from "./Toast";
 import CallTimer from "./CallTimer";
@@ -88,9 +88,9 @@ export default function CallScreen({
         timestamp: now,
         duration: dur,
       });
-      // Log the row as soon as the call ends so capture never depends on the
+      // Log the call as soon as it ends so capture never depends on the
       // user clicking "New Call". Grade/note are added later via PATCH.
-      logCallToSheet({
+      logCall({
         callId: callIdRef.current,
         agentName,
         version,
@@ -115,7 +115,7 @@ export default function CallScreen({
           agent_id: agentId,
           version,
           dynamic_variables: variables,
-          metadata: { mode, agent_name: agentName },
+          metadata: { mode, agent_name: agentName, user: userEmail },
           first_speaker: modeConfig.firstSpeaker,
         }),
       });
@@ -169,7 +169,7 @@ export default function CallScreen({
       toast(message, "error");
       setPhase("ended");
     }
-  }, [agentId, agentName, version, variables, mode, modeConfig.label, toast, endCall, startTime]);
+  }, [agentId, agentName, version, variables, mode, modeConfig.label, userEmail, toast, endCall, startTime]);
 
   // Mic check phase
   useEffect(() => {
