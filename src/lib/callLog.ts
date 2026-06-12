@@ -1,7 +1,7 @@
-// Client-side helpers for syncing call data to the Google Sheet.
-// Both calls are fire-and-forget — a sheet failure must never block the UI.
+// Client-side helpers for persisting call data to the database.
+// Both calls are fire-and-forget — a logging failure must never block the UI.
 
-export interface SheetCallPayload {
+export interface LogCallPayload {
   callId: string;
   agentName: string;
   version?: number;
@@ -11,10 +11,10 @@ export interface SheetCallPayload {
   timestamp: number;
 }
 
-/** Append a row for a call (called once, when the call ends). */
-export async function logCallToSheet(payload: SheetCallPayload): Promise<void> {
+/** Record a call (called once, when the call ends). */
+export async function logCall(payload: LogCallPayload): Promise<void> {
   try {
-    await fetch("/api/calls/log-sheet", {
+    await fetch("/api/calls/log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -24,14 +24,14 @@ export async function logCallToSheet(payload: SheetCallPayload): Promise<void> {
   }
 }
 
-/** Update grade + note on the existing row for a call. */
+/** Update grade + note on an existing call record. */
 export async function patchCallGrade(
   callId: string,
   grade?: number,
   note?: string
 ): Promise<void> {
   try {
-    await fetch("/api/calls/log-sheet", {
+    await fetch("/api/calls/log", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ callId, grade, note }),

@@ -110,13 +110,6 @@ function AppContent() {
                 </button>
               </div>
             </div>
-            <Link
-              href="/calls"
-              className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
-            >
-              <Phone size={16} />
-              View All Calls
-            </Link>
             <CallHistory key={historyKey} onDownload={handleDownload} />
           </>
         ) : (

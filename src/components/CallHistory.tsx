@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Clock, Download, Trash2, Eye, Pencil, Check, X } from "lucide-react";
+import Link from "next/link";
+import { Clock, Download, Trash2, Eye, Pencil, Check, X, ArrowRight } from "lucide-react";
 import { getCallHistory, clearCallHistory, deleteCallRecord, updateCallRecord, type CallRecord } from "@/lib/callHistory";
-import { patchCallGrade } from "@/lib/sheet";
+import { patchCallGrade } from "@/lib/callLog";
 import { useToast } from "./Toast";
 import CallViewer from "./CallViewer";
 import Stars from "./Stars";
@@ -21,6 +22,8 @@ export default function CallHistory({ onDownload }: Props) {
   const { toast } = useToast();
 
   useEffect(() => {
+    // Load persisted history from localStorage on mount.
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
     setHistory(getCallHistory());
   }, []);
 
@@ -60,30 +63,36 @@ export default function CallHistory({ onDownload }: Props) {
     patchCallGrade(callId, grade, note);
   }
 
-  if (history.length === 0) {
-    return (
-      <div className="text-center py-8 text-zinc-500 text-sm">
-        No calls yet.
-      </div>
-    );
-  }
-
   return (
     <>
       <div className="space-y-2">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide">
-            Call History
+            Recent Calls
           </h3>
-          <button
-            onClick={handleClear}
-            className="text-xs text-zinc-400 hover:text-red-500 flex items-center gap-1 transition-colors"
-          >
-            <Trash2 size={12} />
-            Clear
-          </button>
+          {history.length > 0 && (
+            <button
+              onClick={handleClear}
+              className="text-xs text-zinc-400 hover:text-red-500 flex items-center gap-1 transition-colors"
+            >
+              <Trash2 size={12} />
+              Clear
+            </button>
+          )}
         </div>
-        {history.map((record) => (
+        <Link
+          href="/calls"
+          className="mb-3 flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 transition-colors"
+        >
+          View all calls
+          <ArrowRight size={12} />
+        </Link>
+        {history.length === 0 ? (
+          <div className="text-center py-8 text-zinc-500 text-sm">
+            No calls yet.
+          </div>
+        ) : (
+          history.map((record) => (
           <div
             key={record.callId}
             className="rounded-lg border border-zinc-200 dark:border-zinc-800 text-sm transition-colors"
@@ -198,7 +207,8 @@ export default function CallHistory({ onDownload }: Props) {
               </div>
             )}
           </div>
-        ))}
+          ))
+        )}
       </div>
 
       {viewingCallId && (
