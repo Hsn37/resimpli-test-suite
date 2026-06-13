@@ -1,24 +1,38 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Download, Loader2, Copy, Check } from "lucide-react";
+import { X, Download, Loader2, Copy, Check, Pencil } from "lucide-react";
 import { useToast } from "./Toast";
+import { patchCallGrade } from "@/lib/callLog";
 import CallDetailBody, {
   CALL_DETAIL_TABS,
   type CallDetailTab,
 } from "./CallDetailBody";
+import Stars from "./Stars";
 
 interface Props {
   callId: string;
   onClose: () => void;
   onDownload: (callId: string) => void;
+  /** Called after grade/note are saved, so parent lists can stay in sync. */
+  onUpdated?: (callId: string, grade: number | null, note: string | null) => void;
 }
 
-export default function CallViewer({ callId, onClose, onDownload }: Props) {
+export default function CallViewer({
+  callId,
+  onClose,
+  onDownload,
+  onUpdated,
+}: Props) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<CallDetailTab>("transcript");
   const [copied, setCopied] = useState(false);
+  const [grade, setGrade] = useState<number | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [editGrade, setEditGrade] = useState(0);
+  const [editNote, setEditNote] = useState("");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -27,7 +41,11 @@ export default function CallViewer({ callId, onClose, onDownload }: Props) {
         if (!res.ok) throw new Error("Failed to fetch call");
         return res.json();
       })
-      .then(setData)
+      .then((d) => {
+        setData(d);
+        setGrade((d.grade as number) ?? null);
+        setNote((d.note as string) ?? null);
+      })
       .catch((err) => toast(err.message, "error"))
       .finally(() => setLoading(false));
   }, [callId, toast]);
@@ -37,6 +55,26 @@ export default function CallViewer({ callId, onClose, onDownload }: Props) {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
+
+  function startEdit() {
+    setEditGrade(grade ?? 0);
+    setEditNote(note ?? "");
+    setEditing(true);
+  }
+
+  function saveEdit() {
+    const g = editGrade || undefined;
+    const n = editNote.trim() || undefined;
+    setGrade(g ?? null);
+    setNote(n ?? null);
+    setEditing(false);
+    toast("Saved", "success");
+    patchCallGrade(callId, g, n);
+    onUpdated?.(callId, g ?? null, n ?? null);
+  }
+
+  const agentName = data?.agent_name as string | undefined;
+  const userEmail = data?.user_email as string | null | undefined;
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -83,6 +121,79 @@ export default function CallViewer({ callId, onClose, onDownload }: Props) {
           </div>
         ) : (
           <>
+            {/* Who placed the call, rating, note — editable here */}
+            <div className="px-5 pt-4 shrink-0 space-y-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  {agentName && (
+                    <div className="text-sm font-medium truncate">{agentName}</div>
+                  )}
+                  <div className="text-xs text-zinc-500">
+                    Placed by{" "}
+                    <span className="text-zinc-700 dark:text-zinc-300">
+                      {userEmail || "Retell"}
+                    </span>
+                  </div>
+                </div>
+                {!editing && (
+                  <button
+                    onClick={startEdit}
+                    className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 text-xs border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
+                  >
+                    <Pencil size={12} />
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {editing ? (
+                <div className="space-y-2">
+                  <Stars value={editGrade} size={18} onChange={setEditGrade} />
+                  <textarea
+                    value={editNote}
+                    onChange={(e) => setEditNote(e.target.value)}
+                    placeholder="Add a note about this call..."
+                    rows={2}
+                    className="w-full text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={saveEdit}
+                      className="flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-md transition-colors"
+                    >
+                      <Check size={12} /> Save
+                    </button>
+                    <button
+                      onClick={() => setEditing(false)}
+                      className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-600 px-2 py-1 rounded-md transition-colors"
+                    >
+                      <X size={12} /> Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {grade ? (
+                    <span className="flex items-center gap-1.5 text-xs text-zinc-500">
+                      <Stars
+                        value={grade}
+                        size={12}
+                        emptyClass="text-zinc-200 dark:text-zinc-700"
+                      />
+                      <span>{grade}/10</span>
+                    </span>
+                  ) : (
+                    <span className="text-xs text-zinc-400">Not rated</span>
+                  )}
+                  {note && (
+                    <div className="text-sm text-zinc-700 dark:text-zinc-300 italic bg-zinc-50 dark:bg-zinc-900 rounded-lg px-3 py-2">
+                      {note}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
             {/* Tabs */}
             <div className="flex gap-1 px-5 pt-3 shrink-0">
               {CALL_DETAIL_TABS.map((t) => (

@@ -4,6 +4,7 @@ import { useEffect, useState, use } from "react";
 import { Loader2, Phone, Copy, Check, Download } from "lucide-react";
 import { ToastProvider, useToast } from "@/components/Toast";
 import AudioPlayer from "@/components/AudioPlayer";
+import Stars from "@/components/Stars";
 import CallDetailBody, {
   CALL_DETAIL_TABS,
   type CallDetailTab,
@@ -45,6 +46,9 @@ function ShareContent({ callId }: { callId: string }) {
 
   const recordingUrl = data?.recording_url as string | undefined;
   const agentName = data?.agent_name as string | null | undefined;
+  const userEmail = data?.user_email as string | null | undefined;
+  const grade = data?.grade as number | null | undefined;
+  const note = data?.note as string | null | undefined;
   const startTimestamp = data?.start_timestamp as number | undefined;
   const endTimestamp = data?.end_timestamp as number | undefined;
   const duration =
@@ -87,6 +91,35 @@ function ShareContent({ callId }: { callId: string }) {
               )}
             </div>
           )}
+
+          {/* Who placed the call, rating, note */}
+          <div className="mb-6 space-y-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500">
+              <span>
+                Placed by{" "}
+                <span className="text-zinc-700 dark:text-zinc-300 font-medium">
+                  {userEmail || "Retell"}
+                </span>
+              </span>
+              {grade ? (
+                <span className="flex items-center gap-1.5">
+                  <Stars
+                    value={grade}
+                    size={13}
+                    emptyClass="text-zinc-200 dark:text-zinc-700"
+                  />
+                  <span className="text-zinc-700 dark:text-zinc-300">
+                    {grade}/10
+                  </span>
+                </span>
+              ) : null}
+            </div>
+            {note && (
+              <div className="text-sm text-zinc-700 dark:text-zinc-300 italic bg-zinc-50 dark:bg-zinc-900 rounded-lg px-3 py-2">
+                {note}
+              </div>
+            )}
+          </div>
 
           {recordingUrl && (
             <div className="mb-6 flex items-center gap-2">

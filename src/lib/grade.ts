@@ -1,7 +1,8 @@
-// Star rating scale and conversion to a score out of 10. The UI works in
-// whole stars (1..MAX_STARS); the DB stores the score out of SCORE_MAX
-// (mirroring how it was stored in the old Google Sheet, e.g. 4 stars -> 8/10).
-export const MAX_STARS = 5;
+// Star rating scale and conversion to a score out of 10. The UI shows
+// MAX_STARS stars (laid out as two rows of five) and the DB stores the score
+// out of SCORE_MAX. With MAX_STARS === SCORE_MAX the mapping is 1:1; the
+// conversion is kept as functions so the two scales can diverge later.
+export const MAX_STARS = 10;
 export const SCORE_MAX = 10;
 
 /** Convert a 1..MAX_STARS star rating to a score out of SCORE_MAX. */

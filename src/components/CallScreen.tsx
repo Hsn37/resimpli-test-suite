@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import { RetellWebClient } from "retell-client-js-sdk";
 import { CALL_MODES, type CallMode } from "@/lib/presets";
-import { addCallRecord, updateCallRecord } from "@/lib/callHistory";
 import { logCall, patchCallGrade } from "@/lib/callLog";
 import { startRinging, stopRinging } from "@/lib/ringTone";
 import { useToast } from "./Toast";
@@ -80,24 +79,18 @@ export default function CallScreen({
     setDuration(dur);
     if (callIdRef.current) {
       const now = Date.now();
-      addCallRecord({
-        callId: callIdRef.current,
-        agentId,
-        agentName,
-        mode: modeConfig.label,
-        timestamp: now,
-        duration: dur,
-      });
       // Log the call as soon as it ends so capture never depends on the
       // user clicking "New Call". Grade/note are added later via PATCH.
       logCall({
         callId: callIdRef.current,
+        agentId,
         agentName,
         version,
         direction: modeConfig.label,
         variables,
         user: userEmail,
         timestamp: now,
+        duration: dur,
       });
     }
     setPhase("ended");
@@ -208,7 +201,7 @@ export default function CallScreen({
   }, [phase, isOutbound, startCall]);
 
   function handleBack() {
-    // Flush any pending grade/note to the sheet before leaving, in case the
+    // Flush any pending grade/note to the DB before leaving, in case the
     // debounced sync (below) hasn't fired yet.
     if (callIdRef.current && (grade || note.trim())) {
       patchCallGrade(callIdRef.current, grade || undefined, note.trim() || undefined);
@@ -238,17 +231,15 @@ export default function CallScreen({
     setTimeout(() => setCopied(false), 2000);
   }
 
-  // Auto-save grade/note whenever they change after the call ends.
-  // localStorage saves immediately; the sheet sync is debounced so typing a
-  // note doesn't fire a request per keystroke.
+  // Auto-save grade/note to the DB whenever they change after the call ends.
+  // The write is debounced so typing a note doesn't fire a request per keystroke.
   useEffect(() => {
     if (phase !== "ended" || !callIdRef.current) return;
     const id = callIdRef.current;
     const g = grade || undefined;
     const n = note.trim() || undefined;
-    updateCallRecord(id, { grade: g, note: n });
-    // Skip the no-op sheet write on the initial transition (nothing entered
-    // yet), but once anything has been synced keep syncing — including clears.
+    // Skip the no-op write on the initial transition (nothing entered yet),
+    // but once anything has been synced keep syncing — including clears.
     if (!g && !n && !syncedGradeRef.current) return;
     syncedGradeRef.current = true;
     const t = setTimeout(() => patchCallGrade(id, g, n), 1000);
@@ -400,7 +391,9 @@ export default function CallScreen({
       {/* Post-call grade + note */}
       {phase === "ended" && callId && (
         <div className="w-full max-w-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-3">
-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Rate this call</p>
+          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+            Rate this call{grade ? ` · ${grade}/10` : ""}
+          </p>
           <Stars value={grade} size={22} onChange={setGrade} />
           <textarea
             value={note}

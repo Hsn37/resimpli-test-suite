@@ -4,8 +4,17 @@ import { insertCallLog, updateCallGrade } from "@/lib/db";
 // Record a call when it ends. Grade/note are added later via PATCH.
 export async function POST(req: NextRequest) {
   try {
-    const { callId, agentName, version, direction, user, timestamp, variables } =
-      await req.json();
+    const {
+      callId,
+      agentId,
+      agentName,
+      version,
+      direction,
+      user,
+      timestamp,
+      duration,
+      variables,
+    } = await req.json();
 
     if (!callId) {
       return NextResponse.json({ error: "callId is required" }, { status: 400 });
@@ -13,12 +22,14 @@ export async function POST(req: NextRequest) {
 
     await insertCallLog({
       callId,
+      agentId,
       agentName,
       version,
       direction,
       variables,
       userEmail: user,
       timestamp,
+      duration,
     });
 
     return NextResponse.json({ ok: true });

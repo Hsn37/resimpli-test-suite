@@ -3,12 +3,14 @@
 
 export interface LogCallPayload {
   callId: string;
+  agentId: string;
   agentName: string;
   version?: number;
   direction: string;
   variables: Record<string, string>;
   user: string;
   timestamp: number;
+  duration: number;
 }
 
 /** Record a call (called once, when the call ends). */

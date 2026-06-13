@@ -21,7 +21,7 @@ export default function Stars({
   const stars = Array.from({ length: MAX_STARS }, (_, i) => i + 1);
 
   return (
-    <div className="flex items-center gap-0.5">
+    <div className="inline-grid grid-cols-5 gap-0.5 w-fit">
       {stars.map((star) => {
         const icon = (
           <Star

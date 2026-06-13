@@ -302,6 +302,17 @@ function CallsContent() {
     }
   }
 
+  // Reflect grade/note edits made in the call viewer without a refetch.
+  function handleCallUpdated(
+    callId: string,
+    grade: number | null,
+    note: string | null
+  ) {
+    setCalls((prev) =>
+      prev.map((c) => (c.call_id === callId ? { ...c, grade, note } : c))
+    );
+  }
+
   useEffect(() => {
     // Reset list state when navigating to a new page, then fetch it.
     /* eslint-disable-next-line react-hooks/set-state-in-effect */
@@ -522,6 +533,7 @@ function CallsContent() {
           callId={viewingCallId}
           onClose={() => setViewingCallId(null)}
           onDownload={handleDownload}
+          onUpdated={handleCallUpdated}
         />
       )}
     </div>
