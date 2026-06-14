@@ -167,15 +167,19 @@ export async function getCallLogsByIds(
   if (callIds.length === 0) return map;
 
   const db = await getDb();
-  const placeholders = callIds.map(() => "?").join(", ");
-  const result = await db.execute({
-    sql: `SELECT * FROM call_logs WHERE call_id IN (${placeholders})`,
-    args: callIds,
-  });
-
-  for (const row of result.rows) {
-    const log = rowToCallLog(row as unknown as Record<string, unknown>);
-    map.set(log.call_id, log);
+  // Chunk the IN (...) so a large window stays well under SQLite's bind-var cap.
+  const CHUNK = 200;
+  for (let i = 0; i < callIds.length; i += CHUNK) {
+    const batch = callIds.slice(i, i + CHUNK);
+    const placeholders = batch.map(() => "?").join(", ");
+    const result = await db.execute({
+      sql: `SELECT * FROM call_logs WHERE call_id IN (${placeholders})`,
+      args: batch,
+    });
+    for (const row of result.rows) {
+      const log = rowToCallLog(row as unknown as Record<string, unknown>);
+      map.set(log.call_id, log);
+    }
   }
   return map;
 }

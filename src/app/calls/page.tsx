@@ -275,14 +275,15 @@ function CallRow({
 }
 
 const PAGE_SIZE = 50;
+// How many recent calls to load up front. The page filters, sorts, and
+// paginates over this whole window client-side (Retell owns the calls; our DB
+// owns user/grade/note, so cross-field filtering can't be a single query).
+const FETCH_LIMIT = 2000;
 
 function CallsContent() {
   const [calls, setCalls] = useState<RetellCall[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hasNext, setHasNext] = useState(false);
   const [page, setPage] = useState(1);
-  // pageCursors[i] = pagination_key to fetch page i+2 (i.e. cursor at the end of page i+1)
-  const [pageCursors, setPageCursors] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("newest");
   const [userFilter, setUserFilter] = useState<string>("all");
@@ -314,40 +315,32 @@ function CallsContent() {
   }
 
   useEffect(() => {
-    // Reset list state when navigating to a new page, then fetch it.
-    /* eslint-disable-next-line react-hooks/set-state-in-effect */
-    setLoading(true);
-    setPlayingCallId(null);
-    const cursor = page > 1 ? pageCursors[page - 2] : undefined;
-    const url = cursor
-      ? `/api/calls/list?limit=${PAGE_SIZE}&pagination_key=${encodeURIComponent(cursor)}`
-      : `/api/calls/list?limit=${PAGE_SIZE}`;
-
-    fetch(url)
+    // Load a window of recent calls once; the dropdown, search, sort, and
+    // pagination all run over this full set so pagination happens after
+    // filtering (not over Retell's unfiltered cursor stream).
+    let cancelled = false;
+    fetch(`/api/calls/list?limit=${FETCH_LIMIT}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch calls");
         return res.json();
       })
       .then((data) => {
+        if (cancelled) return;
         const list: RetellCall[] = Array.isArray(data) ? data : data.calls ?? [];
         setCalls(list);
-        setUserFilter("all");
-        setHasNext(list.length === PAGE_SIZE);
-        if (list.length === PAGE_SIZE) {
-          const lastCallId = list[list.length - 1].call_id;
-          setPageCursors((prev) => {
-            const next = [...prev];
-            next[page - 1] = lastCallId;
-            return next;
-          });
-        }
       })
-      .catch((err) => toast(err.message, "error"))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+      .catch((err) => {
+        if (!cancelled) toast(err.message, "error");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [toast]);
 
-  // Distinct users present on the current page (calls placed from this tool).
+  // Distinct users across the loaded window (calls placed from this tool).
   const users = useMemo(() => {
     const set = new Set<string>();
     for (const c of calls) if (c.user_email) set.add(c.user_email);
@@ -389,6 +382,10 @@ function CallsContent() {
 
   const isFiltering = search.trim() !== "" || userFilter !== "all" || sort !== "newest";
 
+  // Paginate the filtered/sorted set, so pages reflect the active filters.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   return (
     <div className="max-w-7xl mx-auto p-8">
       <div className="flex items-center gap-3 mb-6">
@@ -405,8 +402,8 @@ function CallsContent() {
         {!loading && (
           <span className="text-xs text-zinc-400">
             {isFiltering
-              ? `${filtered.length} of ${calls.length} on this page`
-              : `Page ${page}`}
+              ? `${filtered.length} of ${calls.length}`
+              : `${calls.length} call${calls.length === 1 ? "" : "s"}`}
           </span>
         )}
       </div>
@@ -420,13 +417,19 @@ function CallsContent() {
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             placeholder="Search by call ID, agent, type, number, or note..."
             className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-9 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
           />
           {search && (
             <button
-              onClick={() => setSearch("")}
+              onClick={() => {
+                setSearch("");
+                setPage(1);
+              }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
             >
               <X size={15} />
@@ -438,7 +441,10 @@ function CallsContent() {
           <span className="text-zinc-500">User</span>
           <select
             value={userFilter}
-            onChange={(e) => setUserFilter(e.target.value)}
+            onChange={(e) => {
+              setUserFilter(e.target.value);
+              setPage(1);
+            }}
             className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[200px]"
           >
             <option value="all">All users</option>
@@ -454,7 +460,10 @@ function CallsContent() {
           <span className="text-zinc-500">Sort</span>
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
+            onChange={(e) => {
+              setSort(e.target.value as SortKey);
+              setPage(1);
+            }}
             className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="newest">Newest first</option>
@@ -488,7 +497,7 @@ function CallsContent() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((call) => (
+              {paged.map((call) => (
                 <CallRow
                   key={call.call_id}
                   call={call}
@@ -506,20 +515,28 @@ function CallsContent() {
         </div>
       )}
 
-      {!loading && !search && userFilter === "all" && (calls.length > 0 || page > 1) && (
+      {!loading && filtered.length > PAGE_SIZE && (
         <div className="flex items-center justify-center gap-3 mt-4">
           <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            onClick={() => {
+              setPage((p) => Math.max(1, p - 1));
+              setPlayingCallId(null);
+            }}
             disabled={page === 1}
             className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <ChevronLeft size={15} />
             Previous
           </button>
-          <span className="text-sm text-zinc-500">Page {page}</span>
+          <span className="text-sm text-zinc-500">
+            Page {page} of {totalPages}
+          </span>
           <button
-            onClick={() => setPage((p) => p + 1)}
-            disabled={!hasNext}
+            onClick={() => {
+              setPage((p) => Math.min(totalPages, p + 1));
+              setPlayingCallId(null);
+            }}
+            disabled={page >= totalPages}
             className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Next
