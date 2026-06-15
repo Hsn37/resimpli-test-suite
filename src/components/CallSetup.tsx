@@ -2,9 +2,18 @@
 
 import { useState, useMemo } from "react";
 import { Phone, PhoneIncoming, PhoneOutgoing, Zap, ChevronDown, Trash2 } from "lucide-react";
-import { CALL_MODES, VARIABLE_PRESETS, type CallMode } from "@/lib/presets";
+import { CALL_MODES, type CallMode, type TestPreset } from "@/lib/presets";
+import { TEST_PRESETS } from "@/lib/tests";
 import VarEditor from "./VarEditor";
 import JsonDropzone from "./JsonDropzone";
+
+function scopeTag(scope: string): string {
+  if (scope.startsWith("INBOUND")) return "Inbound only";
+  if (scope.startsWith("OPENER")) return "Call-type specific";
+  if (scope.startsWith("COMBO")) return "Combo";
+  if (scope.startsWith("ANY")) return "Any call type";
+  return scope;
+}
 
 const MODE_COLORS: Record<CallMode, { border: string; bg: string; btn: string; text: string }> = {
   inbound: {
@@ -46,11 +55,11 @@ export default function CallSetup({ agentName, onStartCall, onBack, initialMode,
   const [variables, setVariables] = useState<Record<string, string>>(
     initialVariables ?? { call_type: CALL_MODES.inbound.callType }
   );
-  const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [selectedTest, setSelectedTest] = useState<TestPreset | null>(null);
 
   const presetGroups = useMemo(() => {
-    const groups: Record<string, typeof VARIABLE_PRESETS> = {};
-    for (const p of VARIABLE_PRESETS) {
+    const groups: Record<string, TestPreset[]> = {};
+    for (const p of TEST_PRESETS) {
       if (!groups[p.group]) groups[p.group] = [];
       groups[p.group].push(p);
     }
@@ -65,16 +74,20 @@ export default function CallSetup({ agentName, onStartCall, onBack, initialMode,
     }));
   }
 
-  function handlePreset(presetName: string, presetVars: Record<string, string>) {
-    setActivePreset(presetName);
+  function handlePreset(test: TestPreset) {
+    setSelectedTest(test);
+    const ct = (
+      test.callType in CALL_MODES ? test.callType : mode
+    ) as CallMode;
+    setMode(ct);
     setVariables({
-      ...presetVars,
-      call_type: CALL_MODES[mode].callType,
+      ...test.variables,
+      call_type: CALL_MODES[ct].callType,
     });
   }
 
   function handleJsonDrop(vars: Record<string, string>) {
-    setActivePreset(null);
+    setSelectedTest(null);
     setVariables((prev) => ({
       ...prev,
       ...vars,
@@ -84,7 +97,7 @@ export default function CallSetup({ agentName, onStartCall, onBack, initialMode,
 
   function clearVars() {
     setVariables({ call_type: CALL_MODES[mode].callType });
-    setActivePreset(null);
+    setSelectedTest(null);
   }
 
   const varCount = Object.keys(variables).length;
@@ -92,7 +105,7 @@ export default function CallSetup({ agentName, onStartCall, onBack, initialMode,
   const colors = MODE_COLORS[mode];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)] max-w-3xl mx-auto">
+    <div className="flex flex-col lg:h-[calc(100vh-8rem)] max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-4 shrink-0">
         <div>
@@ -141,26 +154,27 @@ export default function CallSetup({ agentName, onStartCall, onBack, initialMode,
       {/* Preset + JSON row */}
       <div className="shrink-0 flex items-center gap-2 mb-2">
         <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-          Presets
+          Test case
         </span>
+        <span className="text-xs text-zinc-400">{TEST_PRESETS.length} cases</span>
       </div>
       <div className="shrink-0 flex items-center gap-2 mb-4">
         <div className="relative flex-1">
           <select
-            value={activePreset ?? ""}
+            value={selectedTest?.id ?? ""}
             onChange={(e) => {
-              const name = e.target.value;
-              if (!name) return;
-              const p = VARIABLE_PRESETS.find((pr) => pr.name === name);
-              if (p) handlePreset(p.name, p.variables);
+              const id = e.target.value;
+              if (!id) return;
+              const p = TEST_PRESETS.find((pr) => pr.id === id);
+              if (p) handlePreset(p);
             }}
             className="w-full appearance-none bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-2 pr-10 text-sm"
           >
-            <option value="">Select a preset</option>
+            <option value="">Select a test case</option>
             {Object.entries(presetGroups).map(([group, presets]) => (
               <optgroup key={group} label={group}>
                 {presets.map((p) => (
-                  <option key={p.name} value={p.name}>
+                  <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
@@ -182,25 +196,93 @@ export default function CallSetup({ agentName, onStartCall, onBack, initialMode,
         </button>
       </div>
 
-      {/* Variable count summary */}
-      <div className="shrink-0 flex items-center gap-2 mb-2">
-        <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-          Dynamic Variables
-        </span>
-        <span className="text-xs text-zinc-400">
-          {filledCount} filled / {varCount} total
-        </span>
-      </div>
+      {/* Lower area: variables (large) beside the test details.
+          On mobile it stacks and the page scrolls; on lg it's a fixed-height split. */}
+      <div className="flex flex-col lg:flex-row gap-4 lg:flex-1 lg:min-h-0">
+        {/* Variables column — stays large */}
+        <div className="flex flex-col lg:flex-1 lg:min-h-0 order-2 lg:order-1">
+          <div className="shrink-0 flex items-center gap-2 mb-2">
+            <span className={`text-xs font-bold uppercase tracking-wide ${colors.text}`}>
+              Dynamic Variables
+            </span>
+            <span className="text-xs text-zinc-400">
+              {filledCount} filled / {varCount} total
+            </span>
+          </div>
+          <div className="pr-1 lg:flex-1 lg:overflow-y-auto lg:min-h-0">
+            <VarEditor
+              variables={variables}
+              onChange={(vars) =>
+                setVariables({ ...vars, call_type: CALL_MODES[mode].callType })
+              }
+              lockedKeys={["call_type"]}
+            />
+          </div>
+        </div>
 
-      {/* Variables — main scrollable area */}
-      <div className="flex-1 overflow-y-auto pr-1 min-h-0">
-        <VarEditor
-          variables={variables}
-          onChange={(vars) =>
-            setVariables({ ...vars, call_type: CALL_MODES[mode].callType })
-          }
-          lockedKeys={["call_type"]}
-        />
+        {/* Test details column — shows first on mobile, right side on desktop */}
+        {selectedTest && (
+          <div className="lg:w-96 lg:shrink-0 flex flex-col lg:min-h-0 order-1 lg:order-2">
+            <div className="shrink-0 flex items-center justify-between gap-2 mb-2">
+              <span className={`text-xs font-bold uppercase tracking-wide ${colors.text}`}>
+                Test Details
+              </span>
+              <span
+                title={selectedTest.callTypeScope}
+                className="shrink-0 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300"
+              >
+                {scopeTag(selectedTest.callTypeScope)}
+              </span>
+            </div>
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-3 text-sm lg:flex-1 lg:overflow-y-auto lg:min-h-0">
+              <div className="font-semibold text-zinc-900 dark:text-zinc-100 mb-3">
+                {selectedTest.name}
+              </div>
+
+              <div className="mb-3">
+                <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
+                  Expected outcome
+                </div>
+                <p className="text-zinc-700 dark:text-zinc-300">
+                  {selectedTest.expectedBehavior}
+                </p>
+              </div>
+
+              {selectedTest.sample && (
+                <div className="mb-3">
+                  <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
+                    Agent should say (sample)
+                  </div>
+                  <p className="italic text-zinc-600 dark:text-zinc-400 border-l-2 border-zinc-300 dark:border-zinc-700 pl-2">
+                    {selectedTest.sample}
+                  </p>
+                </div>
+              )}
+
+              {selectedTest.userMessages.length > 0 && (
+                <div className="mb-3">
+                  <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
+                    What to say, in order
+                  </div>
+                  <ol className="list-decimal list-inside space-y-0.5 text-zinc-700 dark:text-zinc-300">
+                    {selectedTest.userMessages.map((m, i) => (
+                      <li key={i}>{m}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              <div>
+                <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
+                  Expected path
+                </div>
+                <p className="font-mono text-xs text-zinc-500 break-words">
+                  {selectedTest.expectedPath}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Pinned footer */}
@@ -209,7 +291,7 @@ export default function CallSetup({ agentName, onStartCall, onBack, initialMode,
           <span className={`font-medium ${colors.text}`}>
             {CALL_MODES[mode].label}
           </span>
-          {activePreset && <span> &middot; {activePreset}</span>}
+          {selectedTest && <span> &middot; {selectedTest.name}</span>}
         </div>
         <button
           onClick={() => onStartCall(mode, variables)}

@@ -278,7 +278,7 @@ const PAGE_SIZE = 50;
 // How many recent calls to load up front. The page filters, sorts, and
 // paginates over this whole window client-side (Retell owns the calls; our DB
 // owns user/grade/note, so cross-field filtering can't be a single query).
-const FETCH_LIMIT = 2000;
+const FETCH_LIMIT = 1000;
 
 function CallsContent() {
   const [calls, setCalls] = useState<RetellCall[]>([]);

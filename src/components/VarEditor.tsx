@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 interface Props {
@@ -11,6 +11,16 @@ interface Props {
 
 export default function VarEditor({ variables, onChange, lockedKeys = [] }: Props) {
   const [newKey, setNewKey] = useState("");
+  const valueRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+
+  // After a new variable is added, move focus to its value box.
+  useEffect(() => {
+    if (focusKey && valueRefs.current[focusKey]) {
+      valueRefs.current[focusKey]?.focus();
+      setFocusKey(null);
+    }
+  }, [focusKey, variables]);
 
   const entries = useMemo(() => {
     const all = Object.entries(variables);
@@ -34,6 +44,7 @@ export default function VarEditor({ variables, onChange, lockedKeys = [] }: Prop
     if (!trimmed || trimmed in variables) return;
     onChange({ ...variables, [trimmed]: "" });
     setNewKey("");
+    setFocusKey(trimmed);
   }
 
   return (
@@ -63,6 +74,9 @@ export default function VarEditor({ variables, onChange, lockedKeys = [] }: Prop
               {key}
             </span>
             <textarea
+              ref={(el) => {
+                valueRefs.current[key] = el;
+              }}
               value={value}
               disabled={locked}
               rows={value.length > 80 ? 3 : 1}
