@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  FileDown,
   Loader2,
   Pause,
   Phone,
@@ -22,7 +23,11 @@ import { ToastProvider, useToast } from "@/components/Toast";
 import AudioPlayer from "@/components/AudioPlayer";
 import CallViewer from "@/components/CallViewer";
 import Stars from "@/components/Stars";
-import { downloadJson, downloadRecording } from "@/lib/downloadRecording";
+import {
+  downloadCsv,
+  downloadJson,
+  downloadRecording,
+} from "@/lib/downloadRecording";
 
 interface RetellCall {
   call_id: string;
@@ -42,6 +47,128 @@ interface RetellCall {
 }
 
 type SortKey = "newest" | "rating-desc" | "rating-asc";
+
+// Shared `/share/<id>` path builder so the row Share button and the CSV export
+// produce identical links. Caller prefixes window.location.origin.
+const SHARE_PATH_PREFIX = "/share";
+function sharePath(callId: string): string {
+  return `${SHARE_PATH_PREFIX}/${callId}`;
+}
+
+// CSV export config. Columns mirror the on-screen row plus the shareable link.
+const EXPORT_FILENAME_PREFIX = "calls_export";
+const CSV_COLUMNS = [
+  "call_id",
+  "agent_name",
+  "call_type",
+  "direction",
+  "start_time",
+  "duration_seconds",
+  "user_email",
+  "grade",
+  "note",
+  "call_status",
+  "from_number",
+  "to_number",
+  "recording_url",
+  "share_link",
+  "variables",
+  "transcript",
+] as const;
+
+// Transcript + variables aren't in the list payload, so the export fetches each
+// call's full detail. How many of those /api/calls/[id] fetches run at once.
+const EXPORT_FETCH_CONCURRENCY = 6;
+
+// Default export excludes calls that are ungraded OR have no recording. The
+// "Include empty / ungraded calls" checkbox overrides this.
+function isExportableByDefault(call: RetellCall): boolean {
+  return call.grade != null && !!call.recording_url;
+}
+
+// Inclusive date-range test over a call's start_timestamp. Calls without a
+// start_timestamp are skipped only when a bound is set.
+function inExportDateRange(
+  ts: number | undefined,
+  startMs: number | null,
+  endMs: number | null
+): boolean {
+  if (startMs == null && endMs == null) return true;
+  if (ts == null) return false;
+  if (startMs != null && ts < startMs) return false;
+  if (endMs != null && ts > endMs) return false;
+  return true;
+}
+
+// Transcript + dynamic variables pulled from a call's full get-call detail.
+interface ExportDetail {
+  variables: string;
+  transcript: string;
+}
+
+const EMPTY_EXPORT_DETAIL: ExportDetail = { variables: "", transcript: "" };
+
+// Variables are serialized as JSON; transcript prefers the plain string and
+// falls back to the structured transcript_object when it's absent.
+function detailToExportFields(data: Record<string, unknown>): ExportDetail {
+  const vars = data.retell_llm_dynamic_variables as
+    | Record<string, unknown>
+    | undefined;
+  const variables =
+    vars && Object.keys(vars).length > 0 ? JSON.stringify(vars) : "";
+
+  let transcript = (data.transcript as string) || "";
+  if (!transcript) {
+    const obj = data.transcript_object as
+      | Array<{ role: string; content: string }>
+      | undefined;
+    if (obj?.length) {
+      transcript = obj.map((m) => `${m.role}: ${m.content}`).join("\n");
+    }
+  }
+  return { variables, transcript };
+}
+
+// Fetch one call's full detail for export. Failure-tolerant so a single bad
+// call never aborts the whole CSV — it just exports blank variables/transcript.
+async function fetchExportDetail(callId: string): Promise<ExportDetail> {
+  try {
+    const res = await fetch(`/api/calls/${callId}`);
+    if (!res.ok) throw new Error("Failed to fetch call detail");
+    return detailToExportFields(await res.json());
+  } catch {
+    return EMPTY_EXPORT_DETAIL;
+  }
+}
+
+// One CSV data row in CSV_COLUMNS order. Escaping is handled by downloadCsv.
+function callToCsvRow(
+  call: RetellCall,
+  detail: ExportDetail
+): (string | number)[] {
+  const duration =
+    call.start_timestamp && call.end_timestamp
+      ? Math.round((call.end_timestamp - call.start_timestamp) / 1000)
+      : "";
+  return [
+    call.call_id,
+    call.agent_name ?? "",
+    call.call_type ?? "",
+    call.direction ?? "",
+    call.start_timestamp ? new Date(call.start_timestamp).toISOString() : "",
+    duration,
+    call.user_email ?? "",
+    call.grade ?? "",
+    call.note ?? "",
+    call.call_status ?? "",
+    call.from_number ?? "",
+    call.to_number ?? "",
+    call.recording_url ?? "",
+    `${window.location.origin}${sharePath(call.call_id)}`,
+    detail.variables,
+    detail.transcript,
+  ];
+}
 
 // Number of <td> columns in a CallRow (used by the expanded audio row's colSpan).
 const TABLE_COLSPAN = 8;
@@ -98,7 +225,7 @@ function CallRow({
   }
 
   function handleShare() {
-    const url = `${window.location.origin}/share/${call.call_id}`;
+    const url = `${window.location.origin}${sharePath(call.call_id)}`;
     navigator.clipboard.writeText(url);
     setShared(true);
     toast("Share link copied to clipboard", "success");
@@ -289,7 +416,59 @@ function CallsContent() {
   const [userFilter, setUserFilter] = useState<string>("all");
   const [playingCallId, setPlayingCallId] = useState<string | null>(null);
   const [viewingCallId, setViewingCallId] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportStart, setExportStart] = useState("");
+  const [exportEnd, setExportEnd] = useState("");
+  const [includeEmpty, setIncludeEmpty] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const { toast } = useToast();
+
+  // Export the in-memory calls within the chosen date range to CSV. Excludes
+  // ungraded/empty calls unless "Include empty / ungraded calls" is checked.
+  // Each call's variables + transcript are fetched from its full detail
+  // (bounded concurrency), since the list payload doesn't carry them.
+  async function handleExport() {
+    const startMs = exportStart
+      ? new Date(`${exportStart}T00:00:00`).getTime()
+      : null;
+    const endMs = exportEnd
+      ? new Date(`${exportEnd}T23:59:59.999`).getTime()
+      : null;
+
+    const selected = calls.filter((c) => {
+      if (!inExportDateRange(c.start_timestamp, startMs, endMs)) return false;
+      if (!includeEmpty && !isExportableByDefault(c)) return false;
+      return true;
+    });
+
+    if (selected.length === 0) {
+      toast("No calls match the selected range", "info");
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const details: ExportDetail[] = new Array(selected.length);
+      for (let i = 0; i < selected.length; i += EXPORT_FETCH_CONCURRENCY) {
+        const batch = selected.slice(i, i + EXPORT_FETCH_CONCURRENCY);
+        const resolved = await Promise.all(
+          batch.map((c) => fetchExportDetail(c.call_id))
+        );
+        resolved.forEach((d, j) => (details[i + j] = d));
+      }
+
+      const filename = [EXPORT_FILENAME_PREFIX, exportStart, exportEnd]
+        .filter(Boolean)
+        .join("_");
+      downloadCsv(
+        [[...CSV_COLUMNS], ...selected.map((c, i) => callToCsvRow(c, details[i]))],
+        `${filename}.csv`
+      );
+      setExportOpen(false);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function handleDownload(callId: string) {
     try {
@@ -471,6 +650,72 @@ function CallsContent() {
             <option value="rating-asc">Rating: low to high</option>
           </select>
         </label>
+
+        <div className="relative">
+          <button
+            onClick={() => setExportOpen((o) => !o)}
+            className="flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <FileDown size={15} />
+            Export
+          </button>
+          {exportOpen && (
+            <>
+              <button
+                type="button"
+                aria-label="Close export"
+                onClick={() => setExportOpen(false)}
+                className="fixed inset-0 z-10 cursor-default"
+              />
+              <div className="absolute right-0 z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-lg space-y-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-zinc-500">Start date</label>
+                  <input
+                    type="date"
+                    value={exportStart}
+                    onChange={(e) => setExportStart(e.target.value)}
+                    className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-zinc-500">End date</label>
+                  <input
+                    type="date"
+                    value={exportEnd}
+                    onChange={(e) => setExportEnd(e.target.value)}
+                    className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                  <input
+                    type="checkbox"
+                    checked={includeEmpty}
+                    onChange={(e) => setIncludeEmpty(e.target.checked)}
+                    className="rounded border-zinc-300 dark:border-zinc-600 text-blue-600 focus:ring-blue-500"
+                  />
+                  Include empty / ungraded calls
+                </label>
+                <button
+                  onClick={handleExport}
+                  disabled={exporting}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {exporting ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" />
+                      Exporting…
+                    </>
+                  ) : (
+                    <>
+                      <Download size={15} />
+                      Export CSV
+                    </>
+                  )}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {loading ? (

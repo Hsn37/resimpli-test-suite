@@ -18,6 +18,12 @@
     --foreground: #ededed;
     --track-bg: #3f3f46;
   }
+
+  /* Render native date controls dark so the calendar-picker icon (and the
+     popup) stay visible on the dark theme instead of a black-on-dark glyph. */
+  input[type="date"] {
+    color-scheme: dark;
+  }
 }
 
 body {

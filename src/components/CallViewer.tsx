@@ -35,6 +35,16 @@ export default function CallViewer({
   const [editNote, setEditNote] = useState("");
   const { toast } = useToast();
 
+  // Lock background scroll while the modal is open so the page behind the
+  // overlay can't scroll (incl. wheel chaining when the modal scroll bottoms out).
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
+
   useEffect(() => {
     fetch(`/api/calls/${callId}`)
       .then((res) => {
@@ -212,7 +222,7 @@ export default function CallViewer({
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
+            <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 min-h-0">
               <CallDetailBody data={data} tab={tab} />
             </div>
           </>

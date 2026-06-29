@@ -14,7 +14,10 @@ function headers(): HeadersInit {
 }
 
 export async function listAgents() {
-  const res = await fetch(`${RETELL_BASE_URL}/list-agents`, {
+  // is_latest=true returns one entry per agent (its latest version). Without
+  // it, /list-agents returns every version, so name lookups can resolve to a
+  // stale pre-rename name depending on which version is read last.
+  const res = await fetch(`${RETELL_BASE_URL}/list-agents?is_latest=true`, {
     method: "GET",
     headers: headers(),
   });
