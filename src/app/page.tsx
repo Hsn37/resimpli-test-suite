@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { UserButton, useUser } from "@clerk/nextjs";
-import { Settings, PanelLeftClose, PanelLeftOpen, Phone } from "lucide-react";
+import { Settings, PanelLeftClose, PanelLeftOpen, Phone, FlaskConical } from "lucide-react";
 import Link from "next/link";
 import { ToastProvider, useToast } from "@/components/Toast";
 import AgentSelect from "@/components/AgentSelect";
@@ -93,6 +93,20 @@ function AppContent() {
             <div className="flex items-center justify-between mb-6">
               <h1 className="font-semibold text-sm">Resimpli Test Suite</h1>
               <div className="flex items-center gap-2">
+                <Link
+                  href="/calls"
+                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                  title="Calls"
+                >
+                  <Phone size={16} />
+                </Link>
+                <Link
+                  href="/batch-tests"
+                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+                  title="Batch Tests"
+                >
+                  <FlaskConical size={16} />
+                </Link>
                 {isAdmin && (
                   <Link
                     href="/admin"
@@ -128,6 +142,13 @@ function AppContent() {
             >
               <Phone size={16} />
             </Link>
+            <Link
+              href="/batch-tests"
+              className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+              title="Batch Tests"
+            >
+              <FlaskConical size={16} />
+            </Link>
             {isAdmin && (
               <Link
                 href="/admin"
@@ -152,6 +173,13 @@ function AppContent() {
               title="Calls"
             >
               <Phone size={16} />
+            </Link>
+            <Link
+              href="/batch-tests"
+              className="text-zinc-400 hover:text-zinc-600 transition-colors"
+              title="Batch Tests"
+            >
+              <FlaskConical size={16} />
             </Link>
             {isAdmin && (
               <Link

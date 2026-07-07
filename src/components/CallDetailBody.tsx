@@ -1,9 +1,13 @@
 "use client";
 
+import TranscriptView from "./TranscriptView";
+import Stars from "./Stars";
+
 export type CallDetailTab =
   | "transcript"
   | "tools"
   | "analysis"
+  | "ai_grade"
   | "variables"
   | "raw";
 
@@ -11,11 +15,12 @@ export const CALL_DETAIL_TABS: { key: CallDetailTab; label: string }[] = [
   { key: "transcript", label: "Transcript" },
   { key: "tools", label: "Tool Calls" },
   { key: "analysis", label: "Analysis" },
+  { key: "ai_grade", label: "AI Grade" },
   { key: "variables", label: "Variables" },
   { key: "raw", label: "Raw JSON" },
 ];
 
-function KeyValueList({ entries }: { entries: [string, unknown][] }) {
+export function KeyValueList({ entries }: { entries: [string, unknown][] }) {
   return (
     <div className="space-y-2">
       {entries.map(([key, value]) => (
@@ -57,39 +62,20 @@ export default function CallDetailBody({
   const variables = data.retell_llm_dynamic_variables as
     | Record<string, unknown>
     | undefined;
+  const aiGrade = data.ai_grade as { score: number; note: string } | null | undefined;
 
   if (tab === "transcript") {
-    return (
-      <div className="space-y-3">
-        {transcriptObj && transcriptObj.length > 0 ? (
-          transcriptObj.map((msg, i) => (
-            <div
-              key={i}
-              className={`flex ${msg.role === "agent" ? "justify-start" : "justify-end"}`}
-            >
-              <div
-                className={`max-w-[80%] px-3 py-2 rounded-lg text-sm break-words ${
-                  msg.role === "agent"
-                    ? "bg-zinc-100 dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200"
-                    : "bg-blue-600 text-white"
-                }`}
-              >
-                <div className="text-[10px] font-semibold uppercase mb-0.5 opacity-60">
-                  {msg.role}
-                </div>
-                {msg.content}
-              </div>
-            </div>
-          ))
-        ) : transcript ? (
-          <pre className="text-sm whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">
-            {transcript}
-          </pre>
-        ) : (
-          <p className="text-sm text-zinc-500">No transcript available.</p>
-        )}
-      </div>
-    );
+    if (transcriptObj && transcriptObj.length > 0) {
+      return <TranscriptView turns={transcriptObj} />;
+    }
+    if (transcript) {
+      return (
+        <pre className="text-sm whitespace-pre-wrap text-zinc-700 dark:text-zinc-300">
+          {transcript}
+        </pre>
+      );
+    }
+    return <p className="text-sm text-zinc-500">No transcript available.</p>;
   }
 
   if (tab === "tools") {
@@ -118,6 +104,27 @@ export default function CallDetailBody({
       <KeyValueList entries={Object.entries(analysis)} />
     ) : (
       <p className="text-sm text-zinc-500">No analysis available.</p>
+    );
+  }
+
+  if (tab === "ai_grade") {
+    if (!aiGrade) {
+      return (
+        <p className="text-sm text-zinc-500">
+          No AI grade yet — it&apos;s generated the first time this call is opened
+          and can take a few seconds.
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-3">
+        <Stars
+          value={aiGrade.score}
+          size={20}
+          filledClass="fill-purple-500 text-purple-500"
+        />
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">{aiGrade.note}</p>
+      </div>
     );
   }
 

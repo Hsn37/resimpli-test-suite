@@ -10,6 +10,8 @@ interface Props {
   onChange?: (value: number) => void;
   /** Tailwind classes for empty stars (display vs. picker use slightly different shades). */
   emptyClass?: string;
+  /** Tailwind classes for filled stars — defaults to the human-rating yellow. */
+  filledClass?: string;
 }
 
 export default function Stars({
@@ -17,6 +19,7 @@ export default function Stars({
   size = 16,
   onChange,
   emptyClass = "text-zinc-300 dark:text-zinc-600",
+  filledClass = "fill-yellow-400 text-yellow-400",
 }: Props) {
   const stars = Array.from({ length: MAX_STARS }, (_, i) => i + 1);
 
@@ -26,9 +29,7 @@ export default function Stars({
         const icon = (
           <Star
             size={size}
-            className={
-              star <= value ? "fill-yellow-400 text-yellow-400" : emptyClass
-            }
+            className={star <= value ? filledClass : emptyClass}
           />
         );
         return onChange ? (

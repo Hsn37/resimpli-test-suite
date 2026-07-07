@@ -44,6 +44,7 @@ interface RetellCall {
   grade?: number | null;
   note?: string | null;
   user_email?: string | null;
+  ai_grade?: { score: number; note: string } | null;
 }
 
 type SortKey = "newest" | "rating-desc" | "rating-asc";
@@ -171,7 +172,7 @@ function callToCsvRow(
 }
 
 // Number of <td> columns in a CallRow (used by the expanded audio row's colSpan).
-const TABLE_COLSPAN = 8;
+const TABLE_COLSPAN = 9;
 
 const STATUS_STYLES: Record<string, string> = {
   ended: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
@@ -301,6 +302,18 @@ function CallRow({
         <td className="py-3 px-3 whitespace-nowrap">
           {call.grade ? (
             <Stars value={call.grade} size={13} emptyClass="text-zinc-200 dark:text-zinc-700" />
+          ) : (
+            <span className="text-zinc-300 dark:text-zinc-600">—</span>
+          )}
+        </td>
+        <td className="py-3 px-3 whitespace-nowrap" title={call.ai_grade?.note}>
+          {call.ai_grade ? (
+            <Stars
+              value={call.ai_grade.score}
+              size={13}
+              filledClass="fill-purple-500 text-purple-500"
+              emptyClass="text-zinc-200 dark:text-zinc-700"
+            />
           ) : (
             <span className="text-zinc-300 dark:text-zinc-600">—</span>
           )}
@@ -737,6 +750,7 @@ function CallsContent() {
                 <th className="py-2.5 px-3 font-medium">Duration</th>
                 <th className="py-2.5 px-3 font-medium">User</th>
                 <th className="py-2.5 px-3 font-medium">Rating</th>
+                <th className="py-2.5 px-3 font-medium">AI Grade</th>
                 <th className="py-2.5 px-3 font-medium">Note</th>
                 <th className="py-2.5 pl-3 pr-4 font-medium text-right">Actions</th>
               </tr>

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Check, Loader2, Search, X } from "lucide-react";
+import { Bot, Check, Search, X } from "lucide-react";
 import { useToast } from "./Toast";
+import Skeleton from "./Skeleton";
 
 interface Agent {
   agent_id: string;
@@ -90,14 +91,6 @@ export default function AgentSelect({ onSelect }: Props) {
     onSelect(selectedAgent.agent_id, selectedAgent.agent_name, selectedVersion);
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="animate-spin text-zinc-400" size={32} />
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] max-w-4xl mx-auto">
       <h2 className="text-xl font-semibold mb-4 shrink-0">Select an Agent</h2>
@@ -119,7 +112,8 @@ export default function AgentSelect({ onSelect }: Props) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name or ID..."
-              className="w-full text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
+              disabled={loading}
+              className="w-full text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400 disabled:opacity-60"
             />
             {search && (
               <button
@@ -131,7 +125,20 @@ export default function AgentSelect({ onSelect }: Props) {
             )}
           </div>
           <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-            {filteredAgents.map((agent) => (
+            {loading &&
+              Array.from({ length: 6 }, (_, i) => (
+                <div
+                  key={i}
+                  className="w-full flex items-center gap-3 p-3 rounded-lg border border-zinc-200 dark:border-zinc-800"
+                >
+                  <Skeleton className="h-[18px] w-[18px] rounded-full shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <Skeleton className="h-4 w-2/3 mb-1.5" />
+                    <Skeleton className="h-3 w-full" />
+                  </div>
+                </div>
+              ))}
+            {!loading && filteredAgents.map((agent) => (
               <button
                 key={agent.agent_id}
                 onClick={() => handleAgentClick(agent)}
@@ -152,7 +159,7 @@ export default function AgentSelect({ onSelect }: Props) {
                 </div>
               </button>
             ))}
-            {filteredAgents.length === 0 && (
+            {!loading && filteredAgents.length === 0 && (
               <div className="text-center py-10 text-zinc-500 text-sm">
                 {agents.length === 0
                   ? "No agents found."
@@ -172,8 +179,13 @@ export default function AgentSelect({ onSelect }: Props) {
               Select an agent to see versions
             </div>
           ) : loadingVersions ? (
-            <div className="flex-1 flex items-center justify-center">
-              <Loader2 className="animate-spin text-zinc-400" size={24} />
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {Array.from({ length: 4 }, (_, i) => (
+                <div key={i} className="p-3 rounded-lg border border-zinc-200 dark:border-zinc-800">
+                  <Skeleton className="h-4 w-16 mb-1.5" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              ))}
             </div>
           ) : versions.length === 0 ? (
             <div className="flex-1 flex items-center justify-center text-zinc-400 text-sm">

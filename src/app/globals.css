@@ -26,6 +26,13 @@
   }
 }
 
+html {
+  /* Always reserve space for the vertical scrollbar so content height
+     changes (loading states, tab switches, accordions) never shift the
+     whole page horizontally when the scrollbar appears/disappears. */
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

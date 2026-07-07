@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { listAgents, listCalls } from "@/lib/retell";
-import { getCallLogsByIds } from "@/lib/db";
+import { getAiGradesForSubjects, getCallLogsByIds } from "@/lib/db";
 import { scoreToStars } from "@/lib/grade";
 
 interface RetellAgent {
@@ -46,10 +46,14 @@ export async function GET(request: Request) {
     // Enrich with our own call logs (grade/note/user) for calls placed from
     // within this tool. Degrades gracefully if the DB is unreachable.
     const callIds = callList.map((c) => String(c.call_id));
-    const logs = await getCallLogsByIds(callIds).catch(() => new Map());
+    const [logs, aiGrades] = await Promise.all([
+      getCallLogsByIds(callIds).catch(() => new Map()),
+      getAiGradesForSubjects("call", callIds).catch(() => new Map()),
+    ]);
 
     const enriched = callList.map((call) => {
       const log = logs.get(String(call.call_id));
+      const aiGrade = aiGrades.get(String(call.call_id));
       // Prefer our DB record; fall back to the user we stamped into the Retell
       // call metadata at creation time (covers calls placed from this tool).
       const metaUser = (call.metadata as { user?: string } | undefined)?.user;
@@ -62,6 +66,7 @@ export async function GET(request: Request) {
         grade,
         note: log?.note ?? null,
         user_email: log?.user_email ?? metaUser ?? null,
+        ai_grade: aiGrade ? { score: aiGrade.score, note: aiGrade.note } : null,
       };
     });
 
