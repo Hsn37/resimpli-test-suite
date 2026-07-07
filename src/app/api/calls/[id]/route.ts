@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAgent, getCall } from "@/lib/retell";
-import { getAiGrade, getCallLogsByIds, insertAiGrade } from "@/lib/db";
+import { getCallLogsByIds } from "@/lib/db";
 import { scoreToStars } from "@/lib/grade";
-import { gradeTranscript } from "@/lib/grader";
-import type { TranscriptTurn } from "@/components/TranscriptView";
+import { ensureCallGraded } from "@/lib/grader";
 
 export async function GET(
   _request: Request,
@@ -44,34 +43,5 @@ export async function GET(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to get call";
     return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
-
-async function ensureCallGraded(
-  callId: string,
-  transcriptObject: TranscriptTurn[] | undefined,
-  dynamicVariables: Record<string, unknown> | undefined
-): Promise<{ score: number; note: string } | null> {
-  const existing = await getAiGrade("call", callId);
-  if (existing) return { score: existing.score, note: existing.note };
-
-  if (!transcriptObject || transcriptObject.length === 0) return null;
-
-  try {
-    const context: Record<string, string> = {};
-    for (const [k, v] of Object.entries(dynamicVariables ?? {})) {
-      context[k] = String(v);
-    }
-    const result = await gradeTranscript(transcriptObject, context);
-    await insertAiGrade({
-      subjectType: "call",
-      subjectId: callId,
-      score: result.score,
-      note: result.note,
-      chatId: result.chatId,
-    });
-    return { score: result.score, note: result.note };
-  } catch {
-    return null;
   }
 }

@@ -1,5 +1,6 @@
 import "server-only";
-import { createChat, createChatCompletion, endChat, getChat } from "./retell";
+import { createChat, createChatCompletion, endChat, getCall, getChat } from "./retell";
+import { getAiGrade, insertAiGrade } from "./db";
 import type { TranscriptTurn } from "@/components/TranscriptView";
 
 function getGraderAgentId(): string {
@@ -66,4 +67,57 @@ export async function gradeTranscript(
   }
 
   throw new Error(`Grading timed out for chat ${chat.chat_id}`);
+}
+
+/**
+ * Grade a call, reusing a cached grade if one already exists. Used both as a
+ * lazy fallback (call detail view) and by the eager background job below.
+ */
+export async function ensureCallGraded(
+  callId: string,
+  transcriptObject: TranscriptTurn[] | undefined,
+  dynamicVariables: Record<string, unknown> | undefined
+): Promise<{ score: number; note: string } | null> {
+  const existing = await getAiGrade("call", callId);
+  if (existing) return { score: existing.score, note: existing.note };
+
+  if (!transcriptObject || transcriptObject.length === 0) return null;
+
+  try {
+    const context: Record<string, string> = {};
+    for (const [k, v] of Object.entries(dynamicVariables ?? {})) {
+      context[k] = String(v);
+    }
+    const result = await gradeTranscript(transcriptObject, context);
+    await insertAiGrade({
+      subjectType: "call",
+      subjectId: callId,
+      score: result.score,
+      note: result.note,
+      chatId: result.chatId,
+    });
+    return { score: result.score, note: result.note };
+  } catch {
+    return null;
+  }
+}
+
+const CALL_READY_POLL_INTERVAL_MS = 3000;
+const CALL_READY_MAX_ATTEMPTS = 15; // ~45s cap waiting for Retell's transcript
+
+/**
+ * Poll Retell for a call's transcript until it's ready, then grade it. Meant
+ * to run as background work (via `after()`) right after a call ends, so
+ * grading happens automatically without anyone needing to open the call.
+ */
+export async function gradeCallWhenReady(callId: string): Promise<void> {
+  for (let attempt = 0; attempt < CALL_READY_MAX_ATTEMPTS; attempt++) {
+    const call = await getCall(callId).catch(() => null);
+    const transcriptObject = call?.transcript_object as TranscriptTurn[] | undefined;
+    if (transcriptObject && transcriptObject.length > 0) {
+      await ensureCallGraded(callId, transcriptObject, call?.retell_llm_dynamic_variables);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, CALL_READY_POLL_INTERVAL_MS));
+  }
 }
