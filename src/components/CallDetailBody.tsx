@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import TranscriptView from "./TranscriptView";
 import Stars from "./Stars";
 
@@ -47,9 +48,14 @@ export function KeyValueList({ entries }: { entries: [string, unknown][] }) {
 export default function CallDetailBody({
   data,
   tab,
+  onGrade,
+  grading,
 }: {
   data: Record<string, unknown>;
   tab: CallDetailTab;
+  /** Omit to hide the "Grade call" button (e.g. the public share page). */
+  onGrade?: () => void;
+  grading?: boolean;
 }) {
   const transcript = (data.transcript as string) || "";
   const transcriptObj = data.transcript_object as
@@ -110,10 +116,22 @@ export default function CallDetailBody({
   if (tab === "ai_grade") {
     if (!aiGrade) {
       return (
-        <p className="text-sm text-zinc-500">
-          No AI grade yet — it&apos;s generated the first time this call is opened
-          and can take a few seconds.
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-zinc-500">
+            No AI grade yet — it&apos;s generated the first time this call is opened
+            and can take a few seconds.
+          </p>
+          {onGrade && (
+            <button
+              onClick={onGrade}
+              disabled={grading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+            >
+              {grading && <Loader2 className="animate-spin" size={14} />}
+              {grading ? "Grading…" : "Grade call"}
+            </button>
+          )}
+        </div>
       );
     }
     return (

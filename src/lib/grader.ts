@@ -97,13 +97,14 @@ export async function ensureCallGraded(
       chatId: result.chatId,
     });
     return { score: result.score, note: result.note };
-  } catch {
+  } catch (err) {
+    console.error(`[grading] failed to grade call ${callId}:`, err);
     return null;
   }
 }
 
 const CALL_READY_POLL_INTERVAL_MS = 3000;
-const CALL_READY_MAX_ATTEMPTS = 15; // ~45s cap waiting for Retell's transcript
+const CALL_READY_MAX_ATTEMPTS = 5; // ~15s cap waiting for Retell's transcript
 
 /**
  * Poll Retell for a call's transcript until it's ready, then grade it. Meant
@@ -120,4 +121,5 @@ export async function gradeCallWhenReady(callId: string): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, CALL_READY_POLL_INTERVAL_MS));
   }
+  console.error(`[grading] transcript never became ready for call ${callId}`);
 }

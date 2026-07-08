@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -23,6 +23,7 @@ import { ToastProvider, useToast } from "@/components/Toast";
 import AudioPlayer from "@/components/AudioPlayer";
 import CallViewer from "@/components/CallViewer";
 import Stars from "@/components/Stars";
+import { gradeCall } from "@/lib/callLog";
 import {
   downloadCsv,
   downloadJson,
@@ -186,17 +187,35 @@ function CallRow({
   isPlaying,
   onTogglePlay,
   onViewDetails,
+  onAiGraded,
 }: {
   call: RetellCall;
   isPlaying: boolean;
   onTogglePlay: () => void;
   onViewDetails: () => void;
+  onAiGraded: (callId: string, aiGrade: { score: number; note: string }) => void;
 }) {
   const [shared, setShared] = useState(false);
   const [noteExpanded, setNoteExpanded] = useState(false);
   const [noteTruncated, setNoteTruncated] = useState(false);
+  const [grading, setGrading] = useState(false);
   const noteRef = useRef<HTMLSpanElement>(null);
   const { toast } = useToast();
+
+  async function handleGradeCall(e: MouseEvent) {
+    e.stopPropagation();
+    setGrading(true);
+    try {
+      const aiGrade = await gradeCall(call.call_id);
+      onAiGraded(call.call_id, aiGrade);
+      toast("Call graded", "success");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to grade call";
+      toast(message, "error");
+    } finally {
+      setGrading(false);
+    }
+  }
 
   // Detect whether the collapsed note actually overflows, so we only offer
   // "View full note" when there's something hidden. A ResizeObserver measures
@@ -314,8 +333,15 @@ function CallRow({
               filledClass="fill-purple-500 text-purple-500"
               emptyClass="text-zinc-200 dark:text-zinc-700"
             />
+          ) : grading ? (
+            <Loader2 className="animate-spin text-zinc-400" size={14} />
           ) : (
-            <span className="text-zinc-300 dark:text-zinc-600">—</span>
+            <button
+              onClick={handleGradeCall}
+              className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              Grade call
+            </button>
           )}
         </td>
         <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400">
@@ -503,6 +529,17 @@ function CallsContent() {
   ) {
     setCalls((prev) =>
       prev.map((c) => (c.call_id === callId ? { ...c, grade, note } : c))
+    );
+  }
+
+  // Reflect a manual "Grade call" result (from the row button or the viewer)
+  // without a refetch.
+  function handleAiGraded(
+    callId: string,
+    aiGrade: { score: number; note: string }
+  ) {
+    setCalls((prev) =>
+      prev.map((c) => (c.call_id === callId ? { ...c, ai_grade: aiGrade } : c))
     );
   }
 
@@ -767,6 +804,7 @@ function CallsContent() {
                     )
                   }
                   onViewDetails={() => setViewingCallId(call.call_id)}
+                  onAiGraded={handleAiGraded}
                 />
               ))}
             </tbody>
@@ -810,6 +848,7 @@ function CallsContent() {
           onClose={() => setViewingCallId(null)}
           onDownload={handleDownload}
           onUpdated={handleCallUpdated}
+          onAiGraded={handleAiGraded}
         />
       )}
     </div>
