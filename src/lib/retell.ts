@@ -88,3 +88,198 @@ export async function getCall(callId: string) {
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
 }
+
+export async function listRetellLlms() {
+  const res = await fetch(`${RETELL_BASE_URL}/list-retell-llms`, {
+    method: "GET",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
+  return res.json();
+}
+
+export interface ResponseEngine {
+  type: "retell-llm" | "conversation-flow";
+  llm_id?: string;
+  conversation_flow_id?: string;
+  version?: number;
+}
+
+export interface TestCaseDefinitionInput {
+  response_engine: ResponseEngine;
+  name: string;
+  user_prompt: string;
+  metrics: string[];
+  dynamic_variables?: Record<string, string>;
+  tool_mocks?: unknown[];
+  llm_model: string;
+}
+
+export async function createTestCaseDefinition(body: TestCaseDefinitionInput) {
+  const res = await fetch(`${RETELL_BASE_URL}/create-test-case-definition`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Retell create-test-case-definition error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function createBatchTest(body: {
+  response_engine: ResponseEngine;
+  test_case_definition_ids: string[];
+}) {
+  const res = await fetch(`${RETELL_BASE_URL}/create-batch-test`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Retell create-batch-test error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function getBatchTest(batchId: string) {
+  const res = await fetch(`${RETELL_BASE_URL}/get-batch-test/${batchId}`, {
+    method: "GET",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
+  return res.json();
+}
+
+export async function listTestRuns(
+  batchId: string,
+  opts: { limit?: number; paginationKey?: string } = {}
+) {
+  const params = new URLSearchParams();
+  params.set("limit", String(opts.limit ?? 1000));
+  if (opts.paginationKey) params.set("pagination_key", opts.paginationKey);
+
+  const res = await fetch(
+    `${RETELL_BASE_URL}/v2/list-test-runs/${batchId}?${params.toString()}`,
+    { method: "GET", headers: headers() }
+  );
+  if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
+  return res.json();
+}
+
+/** Fetch every page of test runs for a batch, following pagination_key until has_more is false. */
+export async function listAllTestRuns(batchId: string) {
+  const items: Record<string, unknown>[] = [];
+  let paginationKey: string | undefined;
+  for (;;) {
+    const page = await listTestRuns(batchId, { paginationKey });
+    items.push(...(page.items ?? []));
+    if (!page.has_more || !page.pagination_key) break;
+    paginationKey = page.pagination_key;
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Chat API (used by the AI call grader — a Retell chat agent acts as judge)
+// ---------------------------------------------------------------------------
+
+export async function createRetellLlm(body: { general_prompt: string }) {
+  const res = await fetch(`${RETELL_BASE_URL}/create-retell-llm`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Retell create-retell-llm error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export type PostChatAnalysisField =
+  | { type: "number"; name: string; description: string; required?: boolean }
+  | { type: "string"; name: string; description: string; required?: boolean }
+  | { type: "boolean"; name: string; description: string; required?: boolean }
+  | {
+      type: "enum";
+      name: string;
+      description: string;
+      choices: string[];
+      required?: boolean;
+    };
+
+export async function createChatAgent(body: {
+  response_engine: ResponseEngine;
+  post_chat_analysis_data: PostChatAnalysisField[];
+}) {
+  const res = await fetch(`${RETELL_BASE_URL}/create-chat-agent`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Retell create-chat-agent error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function createChat(body: { agent_id: string }) {
+  const res = await fetch(`${RETELL_BASE_URL}/create-chat`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Retell create-chat error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function createChatCompletion(body: { chat_id: string; content: string }) {
+  const res = await fetch(`${RETELL_BASE_URL}/create-chat-completion`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Retell create-chat-completion error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function endChat(chatId: string): Promise<void> {
+  const res = await fetch(`${RETELL_BASE_URL}/end-chat/${chatId}`, {
+    method: "PATCH",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
+}
+
+export interface ChatAnalysis {
+  chat_summary?: string;
+  user_sentiment?: string;
+  chat_successful?: boolean;
+  custom_analysis_data?: Record<string, unknown>;
+}
+
+export interface ChatResponse {
+  chat_id: string;
+  agent_id: string;
+  chat_status: "ongoing" | "ended" | "error";
+  chat_analysis?: ChatAnalysis;
+}
+
+export async function getChat(chatId: string): Promise<ChatResponse> {
+  const res = await fetch(`${RETELL_BASE_URL}/get-chat/${chatId}`, {
+    method: "GET",
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
+  return res.json();
+}

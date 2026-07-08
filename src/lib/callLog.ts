@@ -42,3 +42,19 @@ export async function patchCallGrade(
     // non-blocking
   }
 }
+
+/**
+ * Manually trigger AI grading for a call. Unlike the helpers above, this
+ * throws on failure — callers drive a loading/error UI off it (the "Grade
+ * call" button), so it can't be fire-and-forget.
+ */
+export async function gradeCall(
+  callId: string
+): Promise<{ score: number; note: string }> {
+  const res = await fetch(`/api/calls/${callId}/grade`, { method: "POST" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || "Failed to grade call");
+  }
+  return data.ai_grade;
+}

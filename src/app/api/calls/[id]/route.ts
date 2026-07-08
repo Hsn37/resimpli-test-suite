@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAgent, getCall } from "@/lib/retell";
 import { getCallLogsByIds } from "@/lib/db";
 import { scoreToStars } from "@/lib/grade";
+import { ensureCallGraded } from "@/lib/grader";
 
 export async function GET(
   _request: Request,
@@ -29,12 +30,15 @@ export async function GET(
     // DB stores the rating as a score out of 10; convert to a star count.
     const grade = log?.grade != null ? scoreToStars(log.grade) : null;
 
+    const aiGrade = await ensureCallGraded(id, call.transcript_object, call.retell_llm_dynamic_variables);
+
     return NextResponse.json({
       ...call,
       agent_name: agentName,
       grade,
       note: log?.note ?? null,
       user_email: log?.user_email ?? metaUser ?? null,
+      ai_grade: aiGrade,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to get call";

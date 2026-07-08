@@ -31,6 +31,25 @@ export function downloadCsv(rows: unknown[][], filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** Build a CSV from an array of flat objects given an explicit column order, and download it. */
+export function downloadCsvObjects(
+  rows: Record<string, string>[],
+  columns: string[],
+  filename: string
+): void {
+  const lines = [
+    columns.map(escapeCsvCell).join(","),
+    ...rows.map((row) => columns.map((c) => escapeCsvCell(row[c] ?? "")).join(",")),
+  ];
+  const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function downloadRecording(url: string, callId: string): Promise<void> {
   try {
     const res = await fetch(url);

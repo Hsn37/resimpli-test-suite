@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { X, Download, Loader2, Copy, Check, Pencil } from "lucide-react";
 import { useToast } from "./Toast";
-import { patchCallGrade } from "@/lib/callLog";
+import { patchCallGrade, gradeCall } from "@/lib/callLog";
 import CallDetailBody, {
   CALL_DETAIL_TABS,
   type CallDetailTab,
@@ -16,6 +16,8 @@ interface Props {
   onDownload: (callId: string) => void;
   /** Called after grade/note are saved, so parent lists can stay in sync. */
   onUpdated?: (callId: string, grade: number | null, note: string | null) => void;
+  /** Called after a manual AI grade completes, so parent lists can stay in sync. */
+  onAiGraded?: (callId: string, aiGrade: { score: number; note: string }) => void;
 }
 
 export default function CallViewer({
@@ -23,6 +25,7 @@ export default function CallViewer({
   onClose,
   onDownload,
   onUpdated,
+  onAiGraded,
 }: Props) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -33,6 +36,7 @@ export default function CallViewer({
   const [editing, setEditing] = useState(false);
   const [editGrade, setEditGrade] = useState(0);
   const [editNote, setEditNote] = useState("");
+  const [grading, setGrading] = useState(false);
   const { toast } = useToast();
 
   // Lock background scroll while the modal is open so the page behind the
@@ -81,6 +85,21 @@ export default function CallViewer({
     toast("Saved", "success");
     patchCallGrade(callId, g, n);
     onUpdated?.(callId, g ?? null, n ?? null);
+  }
+
+  async function handleGradeCall() {
+    setGrading(true);
+    try {
+      const aiGrade = await gradeCall(callId);
+      setData((prev) => (prev ? { ...prev, ai_grade: aiGrade } : prev));
+      onAiGraded?.(callId, aiGrade);
+      toast("Call graded", "success");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to grade call";
+      toast(message, "error");
+    } finally {
+      setGrading(false);
+    }
   }
 
   const agentName = data?.agent_name as string | undefined;
@@ -223,7 +242,12 @@ export default function CallViewer({
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 min-h-0">
-              <CallDetailBody data={data} tab={tab} />
+              <CallDetailBody
+                data={data}
+                tab={tab}
+                onGrade={handleGradeCall}
+                grading={grading}
+              />
             </div>
           </>
         )}

@@ -1,12 +1,25 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { listAgents, listCalls } from "@/lib/retell";
-import { getCallLogsByIds } from "@/lib/db";
+import { getAiGradesForSubjects, getCallLogsByIds } from "@/lib/db";
 import { scoreToStars } from "@/lib/grade";
+import { ensureCallGraded } from "@/lib/grader";
+import type { TranscriptTurn } from "@/components/TranscriptView";
 
 interface RetellAgent {
   agent_id: string;
   agent_name?: string;
 }
+
+// Cap on how many ungraded calls we'll kick off grading for per page load,
+// so visiting the call history page after a long gap doesn't fire off a
+// burst of grading chats and hit Retell's rate limits. The rest backfill
+// gradually as the page is revisited.
+const MAX_AUTO_GRADE_PER_LOAD = 5;
+
+// Background auto-grading (see below) runs up to MAX_AUTO_GRADE_PER_LOAD
+// gradings in parallel, each capped at ~15s, so give `after()` enough
+// headroom to finish before the function is killed.
+export const maxDuration = 30;
 
 export async function GET(request: Request) {
   try {
@@ -46,10 +59,14 @@ export async function GET(request: Request) {
     // Enrich with our own call logs (grade/note/user) for calls placed from
     // within this tool. Degrades gracefully if the DB is unreachable.
     const callIds = callList.map((c) => String(c.call_id));
-    const logs = await getCallLogsByIds(callIds).catch(() => new Map());
+    const [logs, aiGrades] = await Promise.all([
+      getCallLogsByIds(callIds).catch(() => new Map()),
+      getAiGradesForSubjects("call", callIds).catch(() => new Map()),
+    ]);
 
     const enriched = callList.map((call) => {
       const log = logs.get(String(call.call_id));
+      const aiGrade = aiGrades.get(String(call.call_id));
       // Prefer our DB record; fall back to the user we stamped into the Retell
       // call metadata at creation time (covers calls placed from this tool).
       const metaUser = (call.metadata as { user?: string } | undefined)?.user;
@@ -62,8 +79,36 @@ export async function GET(request: Request) {
         grade,
         note: log?.note ?? null,
         user_email: log?.user_email ?? metaUser ?? null,
+        ai_grade: aiGrade ? { score: aiGrade.score, note: aiGrade.note } : null,
       };
     });
+
+    // Auto-grade a handful of calls that don't have a cached grade yet,
+    // regardless of how they were placed — covers calls that never went
+    // through this tool's own "log on call end" path. Runs in the
+    // background so it never delays the response.
+    const ungraded = callList
+      .filter((call) => {
+        const transcript = call.transcript_object as TranscriptTurn[] | undefined;
+        return !aiGrades.has(String(call.call_id)) && transcript && transcript.length > 0;
+      })
+      .slice(0, MAX_AUTO_GRADE_PER_LOAD);
+
+    if (ungraded.length > 0) {
+      after(() =>
+        Promise.all(
+          ungraded.map((call) =>
+            ensureCallGraded(
+              String(call.call_id),
+              call.transcript_object as TranscriptTurn[] | undefined,
+              call.retell_llm_dynamic_variables as Record<string, unknown> | undefined
+            ).catch((err) =>
+              console.error(`[grading] failed to auto-grade call ${call.call_id}:`, err)
+            )
+          )
+        )
+      );
+    }
 
     return NextResponse.json(enriched);
   } catch (err: unknown) {
