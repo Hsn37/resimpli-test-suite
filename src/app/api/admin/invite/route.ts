@@ -1,21 +1,15 @@
 import { NextResponse } from "next/server";
-import { auth, clerkClient } from "@clerk/nextjs/server";
-import { isAdmin } from "@/lib/admin";
+import { clerkClient } from "@clerk/nextjs/server";
+import { requireAdmin } from "@/lib/admin";
 
 export async function POST(request: Request) {
+  const admin = await requireAdmin();
+  if (!admin.ok) {
+    return NextResponse.json({ error: admin.error }, { status: admin.status });
+  }
+
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const clerk = await clerkClient();
-    const user = await clerk.users.getUser(userId);
-    const email = user.emailAddresses[0]?.emailAddress;
-    if (!isAdmin(email)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
     const body = await request.json();
     const { emailAddress } = body;
     if (!emailAddress) {

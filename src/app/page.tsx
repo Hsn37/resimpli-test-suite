@@ -9,7 +9,7 @@ import AgentSelect from "@/components/AgentSelect";
 import CallSetup from "@/components/CallSetup";
 import CallScreen from "@/components/CallScreen";
 import CallHistory from "@/components/CallHistory";
-import type { CallMode } from "@/lib/presets";
+import { ALL_AGENTS_TAG, type CallMode } from "@/lib/presets";
 
 type Screen = "agent-select" | "call-setup" | "call";
 
@@ -25,6 +25,7 @@ function AppContent() {
   const [screen, setScreen] = useState<Screen>("agent-select");
   const [agentId, setAgentId] = useState("");
   const [agentName, setAgentName] = useState("");
+  const [agentTag, setAgentTag] = useState(ALL_AGENTS_TAG);
   const [version, setVersion] = useState<number | undefined>();
   const [callConfig, setCallConfig] = useState<CallConfig | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
@@ -39,10 +40,14 @@ function AppContent() {
   }, [user]);
   const { toast } = useToast();
 
-  function handleAgentSelect(id: string, name: string, ver?: number) {
+  function handleAgentSelect(id: string, name: string, ver?: number, tag?: string) {
     setAgentId(id);
     setAgentName(name);
     setVersion(ver);
+    setAgentTag(tag ?? ALL_AGENTS_TAG);
+    // Clear any config left over from a previously tested agent — otherwise
+    // its mode/variables leak into this agent's Call Setup screen.
+    setCallConfig(null);
     setScreen("call-setup");
   }
 
@@ -199,6 +204,7 @@ function AppContent() {
         {screen === "call-setup" && (
           <CallSetup
             agentName={agentName}
+            agentTag={agentTag}
             onStartCall={handleStartCall}
             onBack={() => setScreen("agent-select")}
             initialMode={callConfig?.mode}

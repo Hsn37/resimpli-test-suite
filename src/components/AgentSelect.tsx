@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Bot, Check, Search, X } from "lucide-react";
+import { ALL_AGENTS_TAG } from "@/lib/presets";
 import { useToast } from "./Toast";
 import Skeleton from "./Skeleton";
 
@@ -19,7 +20,7 @@ interface AgentVersion {
 }
 
 interface Props {
-  onSelect: (agentId: string, agentName: string, version?: number) => void;
+  onSelect: (agentId: string, agentName: string, version?: number, tag?: string) => void;
 }
 
 export default function AgentSelect({ onSelect }: Props) {
@@ -28,6 +29,7 @@ export default function AgentSelect({ onSelect }: Props) {
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [versions, setVersions] = useState<AgentVersion[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<number | undefined>();
+  const [selectedAgentTag, setSelectedAgentTag] = useState<string>(ALL_AGENTS_TAG);
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [search, setSearch] = useState("");
   const { toast } = useToast();
@@ -65,6 +67,7 @@ export default function AgentSelect({ onSelect }: Props) {
     setSelectedAgent(agent);
     setSelectedVersion(undefined);
     setVersions([]);
+    setSelectedAgentTag(ALL_AGENTS_TAG);
     setLoadingVersions(true);
 
     try {
@@ -78,6 +81,7 @@ export default function AgentSelect({ onSelect }: Props) {
           )
         );
       }
+      setSelectedAgentTag(data.tag ?? ALL_AGENTS_TAG);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       toast(message, "error");
@@ -88,7 +92,7 @@ export default function AgentSelect({ onSelect }: Props) {
 
   function handleConfirm() {
     if (!selectedAgent) return;
-    onSelect(selectedAgent.agent_id, selectedAgent.agent_name, selectedVersion);
+    onSelect(selectedAgent.agent_id, selectedAgent.agent_name, selectedVersion, selectedAgentTag);
   }
 
   return (
@@ -267,7 +271,8 @@ export default function AgentSelect({ onSelect }: Props) {
           </div>
           <button
             onClick={handleConfirm}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+            disabled={loadingVersions}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Continue
           </button>

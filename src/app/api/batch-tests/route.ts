@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTestCaseSet, insertBatchTestRun, listBatchTestRuns } from "@/lib/db";
+import { getAgentSetting, getTestCaseSet, insertBatchTestRun, listBatchTestRuns } from "@/lib/db";
 import {
   createBatchTest,
   createTestCaseDefinition,
@@ -39,6 +39,18 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "set_id, agent_id, agent_name, and response_engine are required" },
         { status: 400 }
+      );
+    }
+
+    const setting = await getAgentSetting(agent_id).catch(() => ({
+      agent_id,
+      enabled: true,
+      tag: "all",
+    }));
+    if (!setting.enabled) {
+      return NextResponse.json(
+        { error: "This agent is disabled and cannot be tested" },
+        { status: 403 }
       );
     }
 

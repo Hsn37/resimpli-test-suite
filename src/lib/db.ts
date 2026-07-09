@@ -2,6 +2,7 @@ import "server-only";
 import { createClient, type Client } from "@libsql/client";
 import { starsToScore } from "./grade";
 import type { TestCase } from "./testCase";
+import { ALL_AGENTS_TAG } from "./presets";
 
 // Turso / libSQL client. Reused across requests in the same server process.
 let client: Client | null = null;
@@ -101,7 +102,23 @@ function ensureSchema(): Promise<void> {
           created_at   INTEGER
         )`
       ),
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS agent_settings (
+          agent_id    TEXT PRIMARY KEY,
+          enabled     INTEGER DEFAULT 1,
+          tag         TEXT DEFAULT 'all',
+          updated_at  INTEGER
+        )`
+      ),
     ]);
+    // Backfill columns on databases created before these were added.
+    for (const col of ["tag TEXT DEFAULT 'all'"]) {
+      try {
+        await db.execute(`ALTER TABLE agent_settings ADD COLUMN ${col}`);
+      } catch {
+        // Column already exists.
+      }
+    }
     await db.execute(
       `CREATE UNIQUE INDEX IF NOT EXISTS ai_grades_subject
        ON ai_grades (subject_type, subject_id)`
@@ -625,3 +642,87 @@ export async function getAiGradesForSubjects(
   }
   return map;
 }
+
+// ---------------------------------------------------------------------------
+// Agent settings (enable/disable + tag agents from the admin panel)
+// ---------------------------------------------------------------------------
+
+export interface AgentSetting {
+  agent_id: string;
+  enabled: boolean;
+  tag: string;
+}
+
+function rowToAgentSetting(
+  agentId: string,
+  row: { enabled: unknown; tag: unknown }
+): AgentSetting {
+  return {
+    agent_id: agentId,
+    enabled: Number(row.enabled) !== 0,
+    tag: String(row.tag ?? ALL_AGENTS_TAG),
+  };
+}
+
+/** Local overrides for agents, keyed by agent_id. Agents with no row are enabled with tag "all". */
+export async function getAgentSettingsMap(): Promise<Map<string, AgentSetting>> {
+  const db = await getDb();
+  const result = await db.execute(`SELECT agent_id, enabled, tag FROM agent_settings`);
+  const map = new Map<string, AgentSetting>();
+  for (const row of result.rows) {
+    const agentId = String(row.agent_id);
+    map.set(agentId, rowToAgentSetting(agentId, row as unknown as { enabled: unknown; tag: unknown }));
+  }
+  return map;
+}
+
+/** A single agent's local settings, defaulting to enabled + untagged. */
+export async function getAgentSetting(agentId: string): Promise<AgentSetting> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT agent_id, enabled, tag FROM agent_settings WHERE agent_id = ?`,
+    args: [agentId],
+  });
+  if (result.rows.length === 0) {
+    return { agent_id: agentId, enabled: true, tag: ALL_AGENTS_TAG };
+  }
+  return rowToAgentSetting(
+    agentId,
+    result.rows[0] as unknown as { enabled: unknown; tag: unknown }
+  );
+}
+
+/** Enable/disable a batch of agents in one round trip. */
+export async function setAgentsEnabled(agentIds: string[], enabled: boolean): Promise<void> {
+  if (agentIds.length === 0) return;
+  const db = await getDb();
+  const now = Date.now();
+  await db.batch(
+    agentIds.map((agentId) => ({
+      sql: `INSERT INTO agent_settings (agent_id, enabled, tag, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+              enabled = excluded.enabled,
+              updated_at = excluded.updated_at`,
+      args: [agentId, enabled ? 1 : 0, ALL_AGENTS_TAG, now],
+    }))
+  );
+}
+
+/** Tag a batch of agents in one round trip. */
+export async function setAgentsTag(agentIds: string[], tag: string): Promise<void> {
+  if (agentIds.length === 0) return;
+  const db = await getDb();
+  const now = Date.now();
+  await db.batch(
+    agentIds.map((agentId) => ({
+      sql: `INSERT INTO agent_settings (agent_id, enabled, tag, updated_at)
+            VALUES (?, 1, ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+              tag = excluded.tag,
+              updated_at = excluded.updated_at`,
+      args: [agentId, tag, now],
+    }))
+  );
+}
+

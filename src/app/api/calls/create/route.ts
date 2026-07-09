@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createWebCall } from "@/lib/retell";
+import { getAgentSetting } from "@/lib/db";
 
 export async function POST(request: Request) {
   try {
@@ -10,6 +11,21 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "agent_id is required" },
         { status: 400 }
+      );
+    }
+
+    // This is the actual enforcement point for the admin "disable agent"
+    // toggle — hiding a disabled agent from the homepage list is only a
+    // convenience; a caller could still know its agent_id directly.
+    const setting = await getAgentSetting(agent_id).catch(() => ({
+      agent_id,
+      enabled: true,
+      tag: "all",
+    }));
+    if (!setting.enabled) {
+      return NextResponse.json(
+        { error: "This agent is disabled and cannot be tested" },
+        { status: 403 }
       );
     }
 
