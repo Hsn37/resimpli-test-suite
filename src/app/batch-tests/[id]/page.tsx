@@ -95,10 +95,13 @@ function SkeletonRunRow() {
       <td className="py-3 px-3">
         <Skeleton className="h-4 w-4/5" />
       </td>
-      <td className="py-3 px-3 w-24">
+      <td className="py-3 px-3 w-20">
         <Skeleton className="h-4 w-3/4" />
       </td>
-      <td className="py-3 px-3 pr-4 w-64">
+      <td className="py-3 px-3 w-36">
+        <Skeleton className="h-4 w-full" />
+      </td>
+      <td className="py-3 px-3 pr-4 w-44">
         <Skeleton className="h-4 w-full" />
       </td>
     </tr>
@@ -221,19 +224,21 @@ function BatchTestDetailContent({ id }: { id: string }) {
         </div>
       )}
 
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden overflow-x-auto">
+      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
         <table className="w-full text-sm border-collapse table-fixed">
           <colgroup>
             <col className="w-20" />
             <col />
-            <col className="w-24" />
-            <col className="w-64" />
+            <col className="w-20" />
+            <col className="w-36" />
+            <col className="w-44" />
           </colgroup>
           <thead>
             <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 text-left text-xs uppercase tracking-wide text-zinc-500">
               <th className="py-2.5 pl-4 pr-3 font-medium">Status</th>
               <th className="py-2.5 px-3 font-medium">Test Case</th>
               <th className="py-2.5 px-3 font-medium">AI Grade</th>
+              <th className="py-2.5 px-3 font-medium">AI Note</th>
               <th className="py-2.5 px-3 pr-4 font-medium">Result</th>
             </tr>
           </thead>
@@ -242,7 +247,7 @@ function BatchTestDetailContent({ id }: { id: string }) {
               Array.from({ length: 8 }, (_, i) => <SkeletonRunRow key={i} />)
             ) : testRuns.length === 0 ? (
               <tr>
-                <td colSpan={4} className="text-center py-10 text-zinc-500 text-sm">
+                <td colSpan={5} className="text-center py-10 text-zinc-500 text-sm">
                   No test runs yet.
                 </td>
               </tr>
@@ -272,14 +277,12 @@ function BatchTestDetailContent({ id }: { id: string }) {
                     </td>
                     <td className="py-3 px-3">
                       {run.ai_grade ? (
-                        <span title={run.ai_grade.note}>
-                          <Stars
-                            value={run.ai_grade.score}
-                            size={12}
-                            filledClass="fill-purple-500 text-purple-500"
-                            emptyClass="text-zinc-200 dark:text-zinc-700"
-                          />
-                        </span>
+                        <Stars
+                          value={run.ai_grade.score}
+                          size={12}
+                          filledClass="fill-purple-500 text-purple-500"
+                          emptyClass="text-zinc-200 dark:text-zinc-700"
+                        />
                       ) : TERMINAL_RUN_STATUSES.has(runStatus) ? (
                         <span className="text-[10px] text-zinc-400 flex items-center gap-1">
                           <Loader2 className="animate-spin" size={10} />
@@ -289,8 +292,23 @@ function BatchTestDetailContent({ id }: { id: string }) {
                         <span className="text-zinc-300 dark:text-zinc-700">—</span>
                       )}
                     </td>
-                    <td className="py-3 px-3 pr-4 text-xs text-zinc-500 truncate">
-                      {run.result_explanation ?? ""}
+                    <td className="py-3 px-3 min-w-0">
+                      {run.ai_grade?.note && (
+                        <span
+                          title={run.ai_grade.note}
+                          className="block truncate text-xs text-zinc-500"
+                        >
+                          {run.ai_grade.note}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-3 pr-4 min-w-0">
+                      <span
+                        title={run.result_explanation ?? ""}
+                        className="block truncate text-xs text-zinc-500"
+                      >
+                        {run.result_explanation ?? ""}
+                      </span>
                     </td>
                   </tr>
                 );

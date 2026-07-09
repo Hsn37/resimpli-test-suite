@@ -26,6 +26,7 @@ export async function POST(request: Request) {
       version,
       response_engine,
       user_email,
+      case_indices,
     } = body as {
       set_id?: string;
       agent_id?: string;
@@ -33,6 +34,9 @@ export async function POST(request: Request) {
       version?: number;
       response_engine?: ResponseEngine;
       user_email?: string;
+      /** Optional subset of `set.cases` to run, by position (its current
+       * save order) rather than all of them. Omit to run every case. */
+      case_indices?: number[];
     };
 
     if (!set_id || !agent_id || !agent_name || !response_engine) {
@@ -50,8 +54,18 @@ export async function POST(request: Request) {
       );
     }
 
+    const casesToRun = Array.isArray(case_indices)
+      ? case_indices.map((i) => set.cases[i]).filter((c): c is (typeof set.cases)[number] => c != null)
+      : set.cases;
+    if (casesToRun.length === 0) {
+      return NextResponse.json(
+        { error: "No valid test cases selected to run" },
+        { status: 400 }
+      );
+    }
+
     const definitionIds: string[] = [];
-    for (const c of set.cases) {
+    for (const c of casesToRun) {
       const result = await createTestCaseDefinition({
         response_engine,
         name: c.name,

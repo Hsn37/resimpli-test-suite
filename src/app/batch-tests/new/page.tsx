@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@clerk/nextjs";
-import { ArrowLeft, FlaskConical, Loader2, Play } from "lucide-react";
+import { ArrowLeft, FlaskConical, Loader2, Play, Save, Trash2 } from "lucide-react";
 import { ToastProvider, useToast } from "@/components/Toast";
 import AgentSelect from "@/components/AgentSelect";
 import TestCaseSetEditor from "@/components/TestCaseSetEditor";
@@ -45,8 +45,10 @@ function NewBatchTestContent() {
   const [setId, setSetId] = useState<string | null>(null);
   const [setName, setSetName] = useState("");
   const [cases, setCases] = useState<CaseDraft[]>([]);
+  const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const { toast } = useToast();
   const { user } = useUser();
@@ -102,6 +104,19 @@ function NewBatchTestContent() {
     }
   }
 
+  async function handleDeleteSet(id: string, name: string) {
+    if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
+    try {
+      const res = await fetch(`/api/test-case-sets/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete test case set");
+      setSets((prev) => prev.filter((s) => s.id !== id));
+      toast(`Deleted "${name}"`, "success");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to delete set";
+      toast(message, "error");
+    }
+  }
+
   function createNewSet() {
     const name = newSetName.trim();
     if (!name) return;
@@ -111,31 +126,59 @@ function NewBatchTestContent() {
     setScreen("editor");
   }
 
+  /** Persists the current name/cases to the DB (creating the set on first
+   * save), independent of running a batch — so edits aren't only saved as a
+   * side effect of starting a run. Returns the set's id. */
+  async function saveSet(): Promise<string> {
+    if (setId) {
+      const res = await fetch(`/api/test-case-sets/${setId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: setName, cases }),
+      });
+      if (!res.ok) throw new Error("Failed to save test case set");
+      return setId;
+    }
+    const res = await fetch("/api/test-case-sets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: setName, cases }),
+    });
+    if (!res.ok) throw new Error("Failed to create test case set");
+    const data = await res.json();
+    setSetId(data.id);
+    return data.id;
+  }
+
+  async function handleSave() {
+    if (cases.length === 0) {
+      toast("Add at least one test case before saving", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveSet();
+      toast("Test case set saved", "success");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to save test case set";
+      toast(message, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleRun() {
     if (!responseEngine || cases.length === 0) {
       toast("Add at least one test case before running", "error");
       return;
     }
+    if (selectedIndices.length === 0) {
+      toast("Select at least one test case to run", "error");
+      return;
+    }
     setSubmitting(true);
     try {
-      let currentSetId = setId;
-      if (currentSetId) {
-        const res = await fetch(`/api/test-case-sets/${currentSetId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: setName, cases }),
-        });
-        if (!res.ok) throw new Error("Failed to save test case set");
-      } else {
-        const res = await fetch("/api/test-case-sets", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: setName, cases }),
-        });
-        if (!res.ok) throw new Error("Failed to create test case set");
-        const data = await res.json();
-        currentSetId = data.id;
-      }
+      const currentSetId = await saveSet();
 
       const res = await fetch("/api/batch-tests", {
         method: "POST",
@@ -147,6 +190,7 @@ function NewBatchTestContent() {
           version,
           response_engine: responseEngine,
           user_email: user?.emailAddresses[0]?.emailAddress,
+          case_indices: selectedIndices.length < cases.length ? selectedIndices : undefined,
         }),
       });
       if (!res.ok) {
@@ -236,14 +280,25 @@ function NewBatchTestContent() {
               <p className="text-sm text-zinc-500 py-6 text-center">No saved test case sets yet.</p>
             ) : (
               sets.map((s) => (
-                <button
+                <div
                   key={s.id}
-                  onClick={() => selectExistingSet(s.id, s.name)}
-                  className="w-full flex items-center justify-between px-3 py-2.5 border-b border-zinc-100 dark:border-zinc-900 last:border-0 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 text-left transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-2.5 border-b border-zinc-100 dark:border-zinc-900 last:border-0 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 transition-colors"
                 >
-                  <span className="font-medium text-sm">{s.name}</span>
-                  <span className="text-xs text-zinc-500 tabular-nums">{s.case_count} cases</span>
-                </button>
+                  <button
+                    onClick={() => selectExistingSet(s.id, s.name)}
+                    className="flex-1 flex items-center justify-between text-left min-w-0"
+                  >
+                    <span className="font-medium text-sm truncate">{s.name}</span>
+                    <span className="text-xs text-zinc-500 tabular-nums shrink-0 ml-2">{s.case_count} cases</span>
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSet(s.id, s.name)}
+                    className="text-zinc-400 hover:text-red-500 transition-colors shrink-0"
+                    title="Delete set"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               ))
             )}
           </div>
@@ -291,16 +346,26 @@ function NewBatchTestContent() {
             </button>
           </div>
 
-          <TestCaseSetEditor cases={cases} onChange={setCases} />
+          <TestCaseSetEditor cases={cases} onChange={setCases} onSelectionChange={setSelectedIndices} />
 
-          <div className="sticky bottom-0 pt-4 pb-2 bg-white dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-end">
+          <div className="sticky bottom-0 pt-4 pb-2 bg-white dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-end gap-2">
+            <button
+              onClick={handleSave}
+              disabled={saving || submitting || cases.length === 0}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+              Save
+            </button>
             <button
               onClick={handleRun}
-              disabled={submitting || cases.length === 0}
+              disabled={submitting || saving || cases.length === 0 || selectedIndices.length === 0}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {submitting ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
-              Run Batch Test
+              Run {selectedIndices.length > 0 && selectedIndices.length < cases.length
+                ? `${selectedIndices.length} Selected`
+                : "Batch Test"}
             </button>
           </div>
         </div>
