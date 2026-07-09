@@ -34,6 +34,23 @@ export interface Preset {
   variables: Record<string, string>;
 }
 
+// Agent tags, assigned per-agent in the admin panel. "all" (the default) means
+// the agent isn't restricted to a direction, so every preset group is shown.
+export const AGENT_TAGS = ["Inbound", "Outbound", "Speed to Lead"] as const;
+export type AgentTag = (typeof AGENT_TAGS)[number];
+export const ALL_AGENTS_TAG = "all";
+
+// Preset group shown regardless of an agent's tag (i.e. not direction-specific).
+export const UNTAGGED_PRESET_GROUP = "All call types";
+
+/** Presets applicable to an agent tagged `tag`: its own group, plus the untagged ones. */
+export function presetsForAgentTag<T extends Preset>(presets: T[], tag: string): T[] {
+  if (tag === ALL_AGENTS_TAG) return presets;
+  return presets.filter(
+    (p) => p.group === tag || p.group === UNTAGGED_PRESET_GROUP
+  );
+}
+
 // A Preset enriched with the test-case script + expected outcome.
 // Generated into ./tests.ts from testing/test_cases_unique.json.
 export interface TestPreset extends Preset {
