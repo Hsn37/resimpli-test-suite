@@ -43,6 +43,10 @@ function MetricsEditor({
     setNewMetric("");
   }
 
+  function update(i: number, value: string) {
+    onChange(metrics.map((m, idx) => (idx === i ? value : m)));
+  }
+
   function remove(i: number) {
     onChange(metrics.filter((_, idx) => idx !== i));
   }
@@ -51,9 +55,11 @@ function MetricsEditor({
     <div className="space-y-1.5">
       {metrics.map((m, i) => (
         <div key={i} className="flex items-start gap-2">
-          <span className="flex-1 text-sm px-2.5 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
-            {m}
-          </span>
+          <input
+            value={m}
+            onChange={(e) => update(i, e.target.value)}
+            className="flex-1 text-sm px-2.5 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
           <button
             onClick={() => remove(i)}
             className="pt-1.5 text-zinc-300 hover:text-red-500 transition-colors shrink-0"

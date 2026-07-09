@@ -167,38 +167,67 @@ function NewBatchTestContent() {
     }
   }
 
-  async function handleRun() {
+  function readyToRun(): boolean {
     if (!responseEngine || cases.length === 0) {
       toast("Add at least one test case before running", "error");
-      return;
+      return false;
     }
     if (selectedIndices.length === 0) {
       toast("Select at least one test case to run", "error");
+      return false;
+    }
+    return true;
+  }
+
+  /** POSTs to /api/batch-tests and navigates to the run. `inlineCases`, when
+   * given, runs against those cases directly instead of the saved set. */
+  async function startBatchRun(runSetId: string, inlineCases?: CaseDraft[]) {
+    const res = await fetch("/api/batch-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        set_id: runSetId,
+        set_name: setName,
+        agent_id: agentId,
+        agent_name: agentName,
+        version,
+        response_engine: responseEngine,
+        user_email: user?.emailAddresses[0]?.emailAddress,
+        case_indices: selectedIndices.length < cases.length ? selectedIndices : undefined,
+        cases: inlineCases,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error ?? "Failed to start batch test");
+    }
+    const data = await res.json();
+    router.push(`/batch-tests/${data.id}`);
+  }
+
+  async function handleSaveAndRun() {
+    if (!readyToRun()) return;
+    setSubmitting(true);
+    try {
+      const currentSetId = await saveSet();
+      await startBatchRun(currentSetId);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to start batch test";
+      toast(message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRunOnly() {
+    if (!readyToRun()) return;
+    if (!setId) {
+      toast("Save the set at least once before running without saving", "error");
       return;
     }
     setSubmitting(true);
     try {
-      const currentSetId = await saveSet();
-
-      const res = await fetch("/api/batch-tests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          set_id: currentSetId,
-          agent_id: agentId,
-          agent_name: agentName,
-          version,
-          response_engine: responseEngine,
-          user_email: user?.emailAddresses[0]?.emailAddress,
-          case_indices: selectedIndices.length < cases.length ? selectedIndices : undefined,
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Failed to start batch test");
-      }
-      const data = await res.json();
-      router.push(`/batch-tests/${data.id}`);
+      await startBatchRun(setId, cases);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to start batch test";
       toast(message, "error");
@@ -358,14 +387,23 @@ function NewBatchTestContent() {
               Save
             </button>
             <button
-              onClick={handleRun}
+              onClick={handleRunOnly}
+              disabled={submitting || saving || cases.length === 0 || selectedIndices.length === 0 || !setId}
+              title={!setId ? "Save the set at least once first" : "Run without saving these edits"}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg font-medium border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {submitting ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
+              Run Only
+            </button>
+            <button
+              onClick={handleSaveAndRun}
               disabled={submitting || saving || cases.length === 0 || selectedIndices.length === 0}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {submitting ? <Loader2 className="animate-spin" size={16} /> : <Play size={16} />}
-              Run {selectedIndices.length > 0 && selectedIndices.length < cases.length
-                ? `${selectedIndices.length} Selected`
-                : "Batch Test"}
+              Save &amp; Run {selectedIndices.length > 0 && selectedIndices.length < cases.length
+                ? `(${selectedIndices.length} Selected)`
+                : ""}
             </button>
           </div>
         </div>

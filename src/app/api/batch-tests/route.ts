@@ -5,6 +5,9 @@ import {
   createTestCaseDefinition,
   type ResponseEngine,
 } from "@/lib/retell";
+import type { TestCase } from "@/lib/testCase";
+
+type CaseInput = Omit<TestCase, "id">;
 
 export async function GET() {
   try {
@@ -21,22 +24,29 @@ export async function POST(request: Request) {
     const body = await request.json();
     const {
       set_id,
+      set_name,
       agent_id,
       agent_name,
       version,
       response_engine,
       user_email,
       case_indices,
+      cases: inlineCases,
     } = body as {
       set_id?: string;
+      set_name?: string;
       agent_id?: string;
       agent_name?: string;
       version?: number;
       response_engine?: ResponseEngine;
       user_email?: string;
-      /** Optional subset of `set.cases` to run, by position (its current
-       * save order) rather than all of them. Omit to run every case. */
+      /** Optional subset of the case list to run, by position (its current
+       * order) rather than all of them. Omit to run every case. */
       case_indices?: number[];
+      /** Run against these cases directly instead of the saved set — lets a
+       * "run without saving" action test unsaved edits. `set_id` is still
+       * required to attribute the run to a set in batch_test_runs. */
+      cases?: CaseInput[];
     };
 
     if (!set_id || !agent_id || !agent_name || !response_engine) {
@@ -46,17 +56,26 @@ export async function POST(request: Request) {
       );
     }
 
-    const set = await getTestCaseSet(set_id);
-    if (!set || set.cases.length === 0) {
-      return NextResponse.json(
-        { error: "Test case set not found or has no cases" },
-        { status: 400 }
-      );
+    let allCases: CaseInput[];
+    let setName: string;
+    if (inlineCases && inlineCases.length > 0) {
+      allCases = inlineCases;
+      setName = set_name ?? "Untitled set";
+    } else {
+      const set = await getTestCaseSet(set_id);
+      if (!set || set.cases.length === 0) {
+        return NextResponse.json(
+          { error: "Test case set not found or has no cases" },
+          { status: 400 }
+        );
+      }
+      allCases = set.cases;
+      setName = set.name;
     }
 
     const casesToRun = Array.isArray(case_indices)
-      ? case_indices.map((i) => set.cases[i]).filter((c): c is (typeof set.cases)[number] => c != null)
-      : set.cases;
+      ? case_indices.map((i) => allCases[i]).filter((c): c is CaseInput => c != null)
+      : allCases;
     if (casesToRun.length === 0) {
       return NextResponse.json(
         { error: "No valid test cases selected to run" },
@@ -94,7 +113,7 @@ export async function POST(request: Request) {
     await insertBatchTestRun({
       id: batchId,
       setId: set_id,
-      setName: set.name,
+      setName,
       agentId: agent_id,
       agentName: agent_name,
       version,
