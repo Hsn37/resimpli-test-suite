@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  ChevronDown,
   ChevronUp,
   Copy,
+  Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -22,6 +22,9 @@ interface Item {
 interface Props {
   cases: CaseDraft[];
   onChange: (cases: CaseDraft[]) => void;
+  /** Fires with the indices (into `cases`, in its current order) of the cases
+   * currently checked to run. New/imported cases are checked by default. */
+  onSelectionChange?: (selectedIndices: number[]) => void;
 }
 
 function MetricsEditor({
@@ -40,6 +43,10 @@ function MetricsEditor({
     setNewMetric("");
   }
 
+  function update(i: number, value: string) {
+    onChange(metrics.map((m, idx) => (idx === i ? value : m)));
+  }
+
   function remove(i: number) {
     onChange(metrics.filter((_, idx) => idx !== i));
   }
@@ -48,9 +55,11 @@ function MetricsEditor({
     <div className="space-y-1.5">
       {metrics.map((m, i) => (
         <div key={i} className="flex items-start gap-2">
-          <span className="flex-1 text-sm px-2.5 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
-            {m}
-          </span>
+          <input
+            value={m}
+            onChange={(e) => update(i, e.target.value)}
+            className="flex-1 text-sm px-2.5 py-1.5 rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
           <button
             onClick={() => remove(i)}
             className="pt-1.5 text-zinc-300 hover:text-red-500 transition-colors shrink-0"
@@ -80,7 +89,9 @@ function CaseCard({
   index,
   item,
   expanded,
+  selected,
   onToggle,
+  onToggleSelected,
   onUpdate,
   onDuplicate,
   onRemove,
@@ -88,7 +99,9 @@ function CaseCard({
   index: number;
   item: Item;
   expanded: boolean;
+  selected: boolean;
   onToggle: () => void;
+  onToggleSelected: () => void;
   onUpdate: (next: CaseDraft) => void;
   onDuplicate: () => void;
   onRemove: () => void;
@@ -96,18 +109,26 @@ function CaseCard({
   const c = item.case;
 
   return (
-    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-      <div
-        className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
-        onClick={onToggle}
-      >
-        {expanded ? <ChevronUp size={15} className="shrink-0 text-zinc-400" /> : <ChevronDown size={15} className="shrink-0 text-zinc-400" />}
+    <div
+      className={`rounded-lg border overflow-hidden ${
+        selected
+          ? "border-zinc-200 dark:border-zinc-800"
+          : "border-zinc-200 dark:border-zinc-800 opacity-50"
+      }`}
+    >
+      <div className="flex items-center gap-2.5 px-3 py-2 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelected}
+          title="Include in run"
+          className="shrink-0 h-4 w-4 accent-blue-600"
+        />
         <span className="text-xs font-mono tabular-nums text-zinc-400 shrink-0 w-6">
           {String(index + 1).padStart(2, "0")}
         </span>
         <input
           value={c.name}
-          onClick={(e) => e.stopPropagation()}
           onChange={(e) => onUpdate({ ...c, name: e.target.value })}
           placeholder="Test case name"
           className="flex-1 text-sm font-medium bg-transparent focus:outline-none min-w-0"
@@ -119,20 +140,21 @@ function CaseCard({
         )}
         <span className="text-xs text-zinc-400 shrink-0">{c.llm_model}</span>
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDuplicate();
-          }}
+          onClick={onToggle}
+          className={`text-zinc-400 hover:text-blue-500 transition-colors shrink-0 ${expanded ? "text-blue-500" : ""}`}
+          title={expanded ? "Close editor" : "Edit"}
+        >
+          {expanded ? <ChevronUp size={15} /> : <Pencil size={14} />}
+        </button>
+        <button
+          onClick={onDuplicate}
           className="text-zinc-400 hover:text-blue-500 transition-colors shrink-0"
           title="Duplicate"
         >
           <Copy size={14} />
         </button>
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
+          onClick={onRemove}
           className="text-zinc-400 hover:text-red-500 transition-colors shrink-0"
           title="Remove"
         >
@@ -219,7 +241,7 @@ function CaseCard({
   );
 }
 
-export default function TestCaseSetEditor({ cases, onChange }: Props) {
+export default function TestCaseSetEditor({ cases, onChange, onSelectionChange }: Props) {
   const nextKey = useRef(cases.length);
   const [items, setItems] = useState<Item[]>(() =>
     cases.map((c, i) => ({ key: i, case: c }))
@@ -227,6 +249,20 @@ export default function TestCaseSetEditor({ cases, onChange }: Props) {
   const [expandedKey, setExpandedKey] = useState<number | null>(
     items.length === 1 ? items[0].key : null
   );
+  // All cases run by default; unchecking narrows a run to a subset.
+  const [selectedKeys, setSelectedKeys] = useState<Set<number>>(
+    () => new Set(items.map((i) => i.key))
+  );
+
+  useEffect(() => {
+    onSelectionChange?.(
+      items.reduce<number[]>((acc, item, index) => {
+        if (selectedKeys.has(item.key)) acc.push(index);
+        return acc;
+      }, [])
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, selectedKeys]);
 
   function commit(next: Item[]) {
     setItems(next);
@@ -236,12 +272,18 @@ export default function TestCaseSetEditor({ cases, onChange }: Props) {
   function addCase() {
     const item = { key: nextKey.current++, case: emptyTestCase() };
     commit([...items, item]);
+    setSelectedKeys((prev) => new Set(prev).add(item.key));
     setExpandedKey(item.key);
   }
 
   function importCases(imported: CaseDraft[]) {
     const newItems = imported.map((c) => ({ key: nextKey.current++, case: c }));
     commit([...items, ...newItems]);
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      for (const item of newItems) next.add(item.key);
+      return next;
+    });
   }
 
   function updateCase(key: number, next: CaseDraft) {
@@ -255,18 +297,56 @@ export default function TestCaseSetEditor({ cases, onChange }: Props) {
     const next = [...items];
     next.splice(idx + 1, 0, copy);
     commit(next);
+    setSelectedKeys((prev) => new Set(prev).add(copy.key));
   }
 
   function removeCase(key: number) {
     commit(items.filter((i) => i.key !== key));
+    setSelectedKeys((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
   }
+
+  function toggleSelected(key: number) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  const selectedCount = items.filter((i) => selectedKeys.has(i.key)).length;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-          {items.length} test case{items.length === 1 ? "" : "s"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
+            {selectedCount} of {items.length} selected
+          </span>
+          {items.length > 0 && (
+            <>
+              <button
+                onClick={() => setSelectedKeys(new Set(items.map((i) => i.key)))}
+                disabled={selectedCount === items.length}
+                className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-40 disabled:no-underline"
+              >
+                Select all
+              </button>
+              <button
+                onClick={() => setSelectedKeys(new Set())}
+                disabled={selectedCount === 0}
+                className="text-xs font-medium text-zinc-500 hover:underline disabled:opacity-40 disabled:no-underline"
+              >
+                Select none
+              </button>
+            </>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <TestCaseJsonImport onImport={importCases} />
           <button
@@ -291,7 +371,9 @@ export default function TestCaseSetEditor({ cases, onChange }: Props) {
               index={index}
               item={item}
               expanded={expandedKey === item.key}
+              selected={selectedKeys.has(item.key)}
               onToggle={() => setExpandedKey(expandedKey === item.key ? null : item.key)}
+              onToggleSelected={() => toggleSelected(item.key)}
               onUpdate={(next) => updateCase(item.key, next)}
               onDuplicate={() => duplicateCase(item.key)}
               onRemove={() => removeCase(item.key)}

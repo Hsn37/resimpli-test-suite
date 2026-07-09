@@ -173,7 +173,7 @@ function callToCsvRow(
 }
 
 // Number of <td> columns in a CallRow (used by the expanded audio row's colSpan).
-const TABLE_COLSPAN = 9;
+const TABLE_COLSPAN = 10;
 
 const STATUS_STYLES: Record<string, string> = {
   ended: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
@@ -181,6 +181,69 @@ const STATUS_STYLES: Record<string, string> = {
   error: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
   registered: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
 };
+
+/**
+ * Truncates `text` to one line in a fixed-width table cell; click to expand
+ * to full, wrapped text (growing the row on the y axis) instead of the
+ * column stretching or the table scrolling on the x axis.
+ */
+function ExpandableText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  // A ResizeObserver measures after layout (a plain effect can run too
+  // early) and again whenever the column width changes.
+  useEffect(() => {
+    if (expanded) return;
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setTruncated(el.scrollWidth > el.clientWidth + 1);
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, expanded]);
+
+  if (expanded) {
+    return (
+      <div>
+        <span className="block whitespace-pre-wrap break-words">{text}</span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded(false);
+          }}
+          className="mt-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+        >
+          Show less
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      onClick={(e) => {
+        if (!truncated) return;
+        e.stopPropagation();
+        setExpanded(true);
+      }}
+      className={`group relative min-w-0 ${truncated ? "cursor-pointer" : ""}`}
+    >
+      <span
+        ref={ref}
+        className={`block truncate ${truncated ? "group-hover:invisible" : ""}`}
+      >
+        {text}
+      </span>
+      {truncated && (
+        <span className="absolute inset-0 hidden items-center text-xs font-medium text-blue-600 dark:text-blue-400 group-hover:flex">
+          View full
+        </span>
+      )}
+    </div>
+  );
+}
 
 function CallRow({
   call,
@@ -196,10 +259,7 @@ function CallRow({
   onAiGraded: (callId: string, aiGrade: { score: number; note: string }) => void;
 }) {
   const [shared, setShared] = useState(false);
-  const [noteExpanded, setNoteExpanded] = useState(false);
-  const [noteTruncated, setNoteTruncated] = useState(false);
   const [grading, setGrading] = useState(false);
-  const noteRef = useRef<HTMLSpanElement>(null);
   const { toast } = useToast();
 
   async function handleGradeCall(e: MouseEvent) {
@@ -216,20 +276,6 @@ function CallRow({
       setGrading(false);
     }
   }
-
-  // Detect whether the collapsed note actually overflows, so we only offer
-  // "View full note" when there's something hidden. A ResizeObserver measures
-  // after the table has laid out (a plain effect can run too early) and again
-  // whenever the column width changes.
-  useEffect(() => {
-    if (noteExpanded) return;
-    const el = noteRef.current;
-    if (!el) return;
-    const check = () => setNoteTruncated(el.scrollWidth > el.clientWidth + 1);
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [call.note, noteExpanded]);
 
   const duration =
     call.start_timestamp && call.end_timestamp
@@ -282,9 +328,9 @@ function CallRow({
             <DirectionIcon size={15} />
           </div>
         </td>
-        <td className="py-3 px-3">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{call.agent_name ?? call.call_type ?? "Call"}</span>
+        <td className="py-3 px-3 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-medium truncate">{call.agent_name ?? call.call_type ?? "Call"}</span>
             {call.call_status && (
               <span
                 className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0 ${statusClass}`}
@@ -293,26 +339,24 @@ function CallRow({
               </span>
             )}
           </div>
-          <div className="text-xs text-zinc-500 mt-0.5">{call.call_type ?? "Call"}</div>
-          <div className="text-[11px] text-zinc-400 font-mono truncate mt-0.5 max-w-[220px]">
+          <div className="text-xs text-zinc-500 mt-0.5 truncate">{call.call_type ?? "Call"}</div>
+          <div className="text-[11px] text-zinc-400 font-mono truncate mt-0.5">
             {call.call_id}
           </div>
         </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 truncate" title={call.start_timestamp ? new Date(call.start_timestamp).toLocaleString() : undefined}>
           {call.start_timestamp
             ? new Date(call.start_timestamp).toLocaleString()
             : "Unknown time"}
         </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 truncate">
           {duration !== null
             ? `${Math.floor(duration / 60)}m ${duration % 60}s`
             : "—"}
         </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 min-w-0">
           {call.user_email ? (
-            <span className="truncate inline-block max-w-[160px] align-bottom" title={call.user_email}>
-              {call.user_email}
-            </span>
+            <ExpandableText text={call.user_email} />
           ) : (
             // No app user — call originated inside Retell, not from our tool.
             <span className="text-zinc-400 dark:text-zinc-500">Retell</span>
@@ -325,7 +369,14 @@ function CallRow({
             <span className="text-zinc-300 dark:text-zinc-600">—</span>
           )}
         </td>
-        <td className="py-3 px-3 whitespace-nowrap" title={call.ai_grade?.note}>
+        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 min-w-0">
+          {call.note ? (
+            <ExpandableText text={call.note} />
+          ) : (
+            <span className="text-zinc-300 dark:text-zinc-600">—</span>
+          )}
+        </td>
+        <td className="py-3 px-3 whitespace-nowrap">
           {call.ai_grade ? (
             <Stars
               value={call.ai_grade.score}
@@ -344,52 +395,8 @@ function CallRow({
             </button>
           )}
         </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400">
-          {call.note ? (
-            noteExpanded ? (
-              <div className="w-[200px]">
-                <span className="block italic whitespace-pre-wrap break-words">
-                  {call.note}
-                </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setNoteExpanded(false);
-                  }}
-                  className="mt-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                  Show less
-                </button>
-              </div>
-            ) : (
-              <div
-                onClick={(e) => {
-                  if (!noteTruncated) return;
-                  e.stopPropagation();
-                  setNoteExpanded(true);
-                }}
-                className={`group relative max-w-[200px] ${
-                  noteTruncated ? "cursor-pointer" : ""
-                }`}
-              >
-                <span
-                  ref={noteRef}
-                  className={`block truncate italic ${
-                    noteTruncated ? "group-hover:invisible" : ""
-                  }`}
-                >
-                  {call.note}
-                </span>
-                {noteTruncated && (
-                  <span className="absolute inset-0 hidden items-center text-xs not-italic font-medium text-blue-600 dark:text-blue-400 group-hover:flex">
-                    View full note
-                  </span>
-                )}
-              </div>
-            )
-          ) : (
-            <span className="text-zinc-300 dark:text-zinc-600">—</span>
-          )}
+        <td className="py-3 px-3 min-w-0 text-zinc-600 dark:text-zinc-400">
+          {call.ai_grade?.note && <ExpandableText text={call.ai_grade.note} />}
         </td>
         <td
           className="py-3 pl-3 pr-4 text-right whitespace-nowrap"
@@ -777,18 +784,31 @@ function CallsContent() {
           {calls.length === 0 ? "No calls yet." : "No calls match your filters."}
         </div>
       ) : (
-        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+          <table className="w-full text-sm border-collapse table-fixed">
+            <colgroup>
+              <col className="w-10" />
+              <col className="w-48" />
+              <col className="w-32" />
+              <col className="w-20" />
+              <col className="w-28" />
+              <col className="w-16" />
+              <col className="w-40" />
+              <col className="w-16" />
+              <col className="w-40" />
+              <col className="w-32" />
+            </colgroup>
             <thead>
-              <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 text-left text-xs uppercase tracking-wide text-zinc-500">
+              <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 text-center text-xs uppercase tracking-wide text-zinc-500">
                 <th className="py-2.5 pl-4 pr-3 font-medium"></th>
                 <th className="py-2.5 px-3 font-medium">Call</th>
                 <th className="py-2.5 px-3 font-medium">Time</th>
                 <th className="py-2.5 px-3 font-medium">Duration</th>
                 <th className="py-2.5 px-3 font-medium">User</th>
                 <th className="py-2.5 px-3 font-medium">Rating</th>
-                <th className="py-2.5 px-3 font-medium">AI Grade</th>
                 <th className="py-2.5 px-3 font-medium">Note</th>
+                <th className="py-2.5 px-3 font-medium">AI Grade</th>
+                <th className="py-2.5 px-3 font-medium">AI Note</th>
                 <th className="py-2.5 pl-3 pr-4 font-medium text-right">Actions</th>
               </tr>
             </thead>

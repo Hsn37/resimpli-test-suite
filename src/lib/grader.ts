@@ -1,6 +1,7 @@
 import "server-only";
 import { createChat, createChatCompletion, endChat, getCall, getChat } from "./retell";
 import { getAiGrade, insertAiGrade } from "./db";
+import { SCORE_MAX } from "./grade";
 import type { TranscriptTurn } from "@/components/TranscriptView";
 
 function getGraderAgentId(): string {
@@ -8,6 +9,12 @@ function getGraderAgentId(): string {
   if (!id) throw new Error("RETELL_GRADER_AGENT_ID is not set");
   return id;
 }
+
+// The Retell grader agent scores conversational quality on a 1-5 scale (see
+// scripts/setup-grader-agent.ts). Scale it up to the app's 0-10 convention
+// (matching the human star rating, see src/lib/grade.ts) before storing, so
+// both grade types render correctly against the same 10-star widget.
+const GRADER_NATIVE_MAX = 5;
 
 function formatGradingMessage(
   turns: TranscriptTurn[],
@@ -58,7 +65,7 @@ export async function gradeTranscript(
     const data = result.chat_analysis?.custom_analysis_data;
     if (result.chat_status === "ended" && data && data.grade != null) {
       return {
-        score: Number(data.grade),
+        score: (Number(data.grade) / GRADER_NATIVE_MAX) * SCORE_MAX,
         note: String(data.note ?? ""),
         chatId: chat.chat_id,
       };
