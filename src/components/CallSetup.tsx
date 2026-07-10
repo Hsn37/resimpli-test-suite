@@ -7,20 +7,21 @@ import {
   type CallMode,
   type TestPreset,
   ALL_AGENTS_TAG,
-  UNTAGGED_PRESET_GROUP,
+  UNIVERSAL_AGENT_SCOPE,
   presetsForAgentTag,
 } from "@/lib/presets";
 import { TEST_PRESETS } from "@/lib/tests";
 import VarEditor from "./VarEditor";
 import JsonDropzone from "./JsonDropzone";
 
-function scopeTag(scope: string): string {
-  if (scope.startsWith("INBOUND")) return "Inbound only";
-  if (scope.startsWith("OPENER")) return "Call-type specific";
-  if (scope.startsWith("COMBO")) return "Combo";
-  if (scope.startsWith("ANY")) return "Any call type";
-  return scope;
-}
+const PRIORITY_STYLES: Record<string, string> = {
+  P0: "bg-red-500/15 text-red-600 dark:text-red-400",
+  P1: "bg-amber-500/15 text-amber-600 dark:text-amber-500",
+  P2: "bg-zinc-500/15 text-zinc-500 dark:text-zinc-400",
+  Obs: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+};
+
+const CHIP = "text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full";
 
 const MODE_COLORS: Record<CallMode, { border: string; bg: string; btn: string; text: string }> = {
   inbound: {
@@ -69,14 +70,15 @@ const MODE_TO_TAG = Object.fromEntries(
   Object.entries(TAG_TO_MODE).map(([tag, mode]) => [mode, tag])
 ) as Record<CallMode, string>;
 
-// Group heading colors in the custom test-case dropdown, derived from
-// MODE_COLORS so the direction colors can't drift between the two pickers.
-const GROUP_LABEL_COLOR: Record<string, string> = {
-  Inbound: "text-blue-600 dark:text-blue-400",
-  Outbound: "text-orange-600 dark:text-orange-400",
-  "Speed to Lead": "text-green-600 dark:text-green-400",
-  [UNTAGGED_PRESET_GROUP]: "text-zinc-700 dark:text-white",
-};
+// Group heading color in the custom test-case dropdown, keyed off the group's
+// direction prefix (groups look like "Inbound · Opener"); universal groups
+// (Global Interrupts, TTS & Config Sanity, …) stay neutral.
+function groupLabelColor(group: string): string {
+  if (group.startsWith("Inbound")) return "text-blue-600 dark:text-blue-400";
+  if (group.startsWith("Outbound")) return "text-orange-600 dark:text-orange-400";
+  if (group.startsWith("Speed to Lead")) return "text-green-600 dark:text-green-400";
+  return "text-zinc-500";
+}
 
 interface Props {
   agentName: string;
@@ -160,11 +162,11 @@ export default function CallSetup({
 
   function handlePreset(test: TestPreset) {
     setSelectedTest(test);
-    // "All call types" presets carry a placeholder callType (always
+    // Universal ("Any"-scope) presets carry a placeholder callType (always
     // "inbound" in the source data) since they don't actually imply a
     // direction — keep whatever mode is already active instead of forcing
     // it back to Inbound for an Outbound/Speed-to-Lead agent.
-    const impliesDirection = test.group !== UNTAGGED_PRESET_GROUP && test.callType in CALL_MODES;
+    const impliesDirection = test.agentScope !== UNIVERSAL_AGENT_SCOPE && test.callType in CALL_MODES;
     const ct = (impliesDirection ? test.callType : mode ?? "inbound") as CallMode;
     setMode(ct);
     setVariables({
@@ -285,7 +287,7 @@ export default function CallSetup({
               {Object.entries(presetGroups).map(([group, presets]) => (
                 <div key={group}>
                   <div
-                    className={`px-3 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-wide ${GROUP_LABEL_COLOR[group] ?? "text-zinc-500"}`}
+                    className={`px-3 pt-2.5 pb-1 text-[11px] font-bold uppercase tracking-wide ${groupLabelColor(group)}`}
                   >
                     {group}
                   </div>
@@ -305,6 +307,10 @@ export default function CallSetup({
                           : "text-zinc-700 dark:text-zinc-300"
                       }`}
                     >
+                      <span className="text-zinc-400 dark:text-zinc-500">
+                        {p.priority}{p.highRisk ? " ★" : ""}
+                      </span>
+                      {" · "}
                       {p.name}
                     </button>
                   ))}
@@ -361,17 +367,51 @@ export default function CallSetup({
               <span className={`text-xs font-bold uppercase tracking-wide ${colors.text}`}>
                 Test Details
               </span>
-              <span
-                title={selectedTest.callTypeScope}
-                className="shrink-0 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300"
-              >
-                {scopeTag(selectedTest.callTypeScope)}
-              </span>
+              <div className="flex items-center gap-1 shrink-0">
+                <span className={`${CHIP} font-bold ${PRIORITY_STYLES[selectedTest.priority] ?? "bg-zinc-200 dark:bg-zinc-800"}`}>
+                  {selectedTest.priority}
+                </span>
+                {selectedTest.highRisk && (
+                  <span className={`${CHIP} font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400`}>
+                    ★ High risk
+                  </span>
+                )}
+                <span
+                  title={`Targets the ${selectedTest.agentScope} agent`}
+                  className={`${CHIP} bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300`}
+                >
+                  {selectedTest.agentScope}
+                </span>
+              </div>
             </div>
             <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-3 text-sm lg:flex-1 lg:overflow-y-auto lg:min-h-0">
-              <div className="font-semibold text-zinc-900 dark:text-zinc-100 mb-3">
+              <div className="font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
                 {selectedTest.name}
               </div>
+
+              {(selectedTest.agentConfig === "Variant" || selectedTest.needsLeadProfile) && (
+                <div className="flex flex-wrap gap-1 mb-3">
+                  {selectedTest.agentConfig === "Variant" && (
+                    <span className={`${CHIP} bg-purple-500/15 text-purple-600 dark:text-purple-400`}>
+                      Variant config
+                    </span>
+                  )}
+                  {selectedTest.needsLeadProfile && (
+                    <span className={`${CHIP} bg-teal-500/15 text-teal-600 dark:text-teal-400`}>
+                      Lead profile staged
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {selectedTest.setup && (
+                <div className="mb-3">
+                  <div className="text-xs font-bold uppercase tracking-wide mb-0.5 text-amber-600 dark:text-amber-500">
+                    Setup
+                  </div>
+                  <p className="text-zinc-700 dark:text-zinc-300">{selectedTest.setup}</p>
+                </div>
+              )}
 
               <div className="mb-3">
                 <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
@@ -403,6 +443,15 @@ export default function CallSetup({
                       <li key={i}>{m}</li>
                     ))}
                   </ol>
+                </div>
+              )}
+
+              {selectedTest.testerNotes && (
+                <div className="mb-3">
+                  <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
+                    Tester notes
+                  </div>
+                  <p className="text-zinc-600 dark:text-zinc-400">{selectedTest.testerNotes}</p>
                 </div>
               )}
 
