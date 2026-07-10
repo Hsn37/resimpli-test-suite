@@ -349,14 +349,14 @@ function AdminContent() {
                 disabled={bulkToggling || agents.every((a) => a.enabled)}
                 className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-40 disabled:no-underline"
               >
-                Select all
+                Enable All
               </button>
               <button
                 onClick={() => handleToggleAllAgents(false)}
                 disabled={bulkToggling || agents.every((a) => !a.enabled)}
                 className="text-xs font-medium text-zinc-500 hover:underline disabled:opacity-40 disabled:no-underline"
               >
-                Deselect all
+                Disable All
               </button>
             </div>
           )}

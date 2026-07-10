@@ -344,7 +344,7 @@ function CallRow({
             {call.call_id}
           </div>
         </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 truncate" title={call.start_timestamp ? new Date(call.start_timestamp).toLocaleString() : undefined}>
+        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 break-words">
           {call.start_timestamp
             ? new Date(call.start_timestamp).toLocaleString()
             : "Unknown time"}
@@ -354,9 +354,9 @@ function CallRow({
             ? `${Math.floor(duration / 60)}m ${duration % 60}s`
             : "—"}
         </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 min-w-0">
+        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 min-w-0 break-words">
           {call.user_email ? (
-            <ExpandableText text={call.user_email} />
+            call.user_email
           ) : (
             // No app user — call originated inside Retell, not from our tool.
             <span className="text-zinc-400 dark:text-zinc-500">Retell</span>
