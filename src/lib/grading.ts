@@ -7,8 +7,11 @@ import {
   listRepDimensions,
   getAppConfig,
   getCall as getDbCall,
+  getCallGrade,
   upsertCallGrade,
+  type CallGrade,
 } from "./db";
+import { ingestCall, type RetellCallPayload } from "./ingestion";
 import {
   gradeCallWithOpenAi,
   type GraderRubricEntry,
@@ -150,6 +153,40 @@ export async function gradeAndStoreCall(
   return result;
 }
 
+/**
+ * Unified grade for a Retell call surfaced on /calls (manual "Grade call" button
+ * or lazy grade on open). Ensures the call exists as a `calls` row — ingested
+ * WITHOUT the inbound/allowlist/tracking filters, since the user explicitly
+ * asked to grade it — then runs the full 0-100 grader into `call_grades`. This
+ * replaces the legacy 0-10 ai_grades path so every graded call, however placed,
+ * shows the same rep_score + grade breakdown. Returns the stored CallGrade, or
+ * null when the call has no transcript to grade.
+ *
+ * Pass the already-fetched Retell record as `payload` to skip a redundant
+ * get-call (e.g. the list route already holds it).
+ */
+export async function gradeRetellCall(
+  workspace: Workspace,
+  callId: string,
+  apiKey: string,
+  payload?: RetellCallPayload
+): Promise<CallGrade | null> {
+  const call = payload ?? (await getRetellCall(callId, apiKey));
+  const ingest = await ingestCall({
+    workspace,
+    call,
+    allowlist: [],
+    trackingStart: null,
+    apiKey,
+    enrich: !payload, // a passed payload is already the full get-call record
+    bypassEligibility: true,
+    rawPayload: { source: "manual_grade", call },
+  });
+  if (!ingest.callRowId) return null; // missing id / empty transcript
+  await gradeAndStoreCall(workspace, ingest.callRowId);
+  return getCallGrade(workspace, ingest.callRowId);
+}
+
 // ---------------------------------------------------------------------------
 // Test-suite path — engine grade scaled to 0-10 into legacy ai_grades
 // ---------------------------------------------------------------------------
@@ -204,8 +241,10 @@ const CALL_READY_MAX_ATTEMPTS = 5; // ~15s cap waiting for Retell's transcript
 
 /**
  * Poll Retell (with the ACTIVE WORKSPACE's key — fixes F-1) for a call's
- * transcript, then grade it. Background work via after() right after a call
- * ends, so grading happens without anyone opening the call.
+ * transcript, then grade it via the unified 0-100 path (upsert into `calls` →
+ * call_grades) so calls placed through the tool land the same breakdown /calls
+ * renders. Background work via after() right after a call ends, so grading
+ * happens without anyone opening the call.
  */
 export async function gradeCallWhenReady(
   callId: string,
@@ -215,13 +254,8 @@ export async function gradeCallWhenReady(
   for (let attempt = 0; attempt < CALL_READY_MAX_ATTEMPTS; attempt++) {
     const call = await getRetellCall(callId, apiKey).catch(() => null);
     const transcriptObject = call?.transcript_object as TranscriptTurn[] | undefined;
-    if (transcriptObject && transcriptObject.length > 0) {
-      await ensureCallGraded(
-        callId,
-        transcriptObject,
-        call?.retell_llm_dynamic_variables,
-        workspace
-      );
+    if (call && transcriptObject && transcriptObject.length > 0) {
+      await gradeRetellCall(workspace, callId, apiKey, call);
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, CALL_READY_POLL_INTERVAL_MS));

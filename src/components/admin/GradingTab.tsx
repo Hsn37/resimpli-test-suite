@@ -1,15 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, type ReactNode } from "react";
-import {
-  Loader2,
-  Save,
-  CheckCircle2,
-  XCircle,
-  Download,
-  Mic,
-  Gauge,
-} from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Loader2, Save, CheckCircle2, XCircle } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { useWorkspace } from "@/components/WorkspaceProvider";
 import { APP_CONFIG_KEYS } from "@/lib/graderRubric";
@@ -26,22 +18,10 @@ const INPUT_CLASS =
 const LABEL_CLASS = "block text-sm font-medium mb-1.5";
 const HINT_CLASS = "text-xs text-zinc-500 mb-2";
 
-// Ingestion trigger endpoints (no magic strings).
-const ROUTE = {
-  backfill: "/api/dashboard/backfill",
-  syncVoices: "/api/dashboard/sync-voices",
-  gradePending: "/api/dashboard/grade-pending",
-} as const;
-
-// Safety cap on the client-driven backfill/grade loops so a UI click can't spin
-// forever if a route keeps reporting work.
-const MAX_LOOP_ITERATIONS = 100;
-
-type TriggerKey = "backfill" | "syncVoices" | "gradePending";
-
 // Grading & Automation tab: edit grader_model, tracking_start_date,
 // agent_id_allowlist, and automation_enabled per active workspace. Also shows a
 // boolean "OpenAI key present" — the key itself is never sent to the client.
+// The Retell ingestion *triggers* live on the dashboard (IngestionTriggers).
 export default function GradingTab() {
   const { workspace } = useWorkspace();
   const { toast } = useToast();
@@ -50,82 +30,6 @@ export default function GradingTab() {
   const [config, setConfig] = useState<GradingConfig | null>(null);
   const [allowlistText, setAllowlistText] = useState("");
   const [openaiKeyPresent, setOpenaiKeyPresent] = useState(false);
-  const [running, setRunning] = useState<TriggerKey | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
-
-  async function postJson(url: string, body?: unknown) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body ?? {}),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-    return data;
-  }
-
-  // Backfill loops (press-until-done) so one click drains the queue; each chunk
-  // is resumable server-side via app_config.backfill_cursor.
-  async function handleBackfill() {
-    setRunning("backfill");
-    setStatus(null);
-    try {
-      let ingested = 0;
-      let graded = 0;
-      for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
-        const r = await postJson(ROUTE.backfill);
-        ingested += r.counters?.ingested ?? 0;
-        graded += r.counters?.graded ?? 0;
-        setStatus(`Backfill: ${ingested} ingested, ${graded} graded${r.done ? " — done." : "…"}`);
-        if (r.done) break;
-      }
-      toast("Backfill complete", "success");
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Backfill failed", "error");
-    } finally {
-      setRunning(null);
-    }
-  }
-
-  async function handleSyncVoices() {
-    setRunning("syncVoices");
-    setStatus(null);
-    try {
-      const r = await postJson(ROUTE.syncVoices);
-      setStatus(
-        `Voices: ${r.agents_upserted} agents synced, ${r.calls_backfilled} calls updated.`
-      );
-      toast("Voice sync complete", "success");
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Voice sync failed", "error");
-    } finally {
-      setRunning(null);
-    }
-  }
-
-  // Grade-pending loops until the server reports remaining=0.
-  async function handleGradePending() {
-    setRunning("gradePending");
-    setStatus(null);
-    try {
-      let graded = 0;
-      let failed = 0;
-      for (let i = 0; i < MAX_LOOP_ITERATIONS; i++) {
-        const r = await postJson(ROUTE.gradePending);
-        graded += r.graded ?? 0;
-        failed += r.failed ?? 0;
-        setStatus(
-          `Grading: ${graded} graded, ${failed} errors, ${r.remaining ?? 0} remaining…`
-        );
-        if ((r.remaining ?? 0) === 0 && (r.batch ?? 0) === 0) break;
-      }
-      toast("Grade-pending complete", "success");
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Grade-pending failed", "error");
-    } finally {
-      setRunning(null);
-    }
-  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -284,71 +188,6 @@ export default function GradingTab() {
           Save changes
         </button>
       </div>
-
-      {/* Ingestion triggers — run backfill / voice-sync / grade-pending for the
-          active workspace. Counters from the routes show in the status line. */}
-      <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">
-        <label className={LABEL_CLASS}>Ingestion</label>
-        <p className={HINT_CLASS}>
-          Manually run the pipeline for the{" "}
-          <span className="font-medium text-blue-600 dark:text-blue-400 uppercase">
-            {workspace}
-          </span>{" "}
-          workspace. The cron loop runs these automatically when automation is on.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <TriggerButton
-            icon={<Download size={16} />}
-            label="Backfill from Retell"
-            active={running === "backfill"}
-            disabled={running !== null}
-            onClick={handleBackfill}
-          />
-          <TriggerButton
-            icon={<Mic size={16} />}
-            label="Sync voices"
-            active={running === "syncVoices"}
-            disabled={running !== null}
-            onClick={handleSyncVoices}
-          />
-          <TriggerButton
-            icon={<Gauge size={16} />}
-            label="Grade pending"
-            active={running === "gradePending"}
-            disabled={running !== null}
-            onClick={handleGradePending}
-          />
-        </div>
-        {status && (
-          <p className="mt-3 text-xs font-mono text-zinc-500 whitespace-pre-wrap">{status}</p>
-        )}
-      </div>
     </div>
-  );
-}
-
-// A single ingestion-trigger button (shared markup — DRY across the three).
-function TriggerButton({
-  icon,
-  label,
-  active,
-  disabled,
-  onClick,
-}: {
-  icon: ReactNode;
-  label: string;
-  active: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className="flex items-center gap-2 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-900 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-    >
-      {active ? <Loader2 size={16} className="animate-spin" /> : icon}
-      {label}
-    </button>
   );
 }

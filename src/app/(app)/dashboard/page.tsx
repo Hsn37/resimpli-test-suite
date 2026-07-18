@@ -1,34 +1,34 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { AlertTriangle, Download, Loader2, Play } from "lucide-react";
+import { AlertTriangle, ChevronDown, Database, Download, Loader2 } from "lucide-react";
 import { ToastProvider, useToast } from "@/components/Toast";
 import Skeleton from "@/components/Skeleton";
-import AudioPlayer from "@/components/AudioPlayer";
 import TrendsChart from "./TrendsChart";
+import CallsTable, { type CallRowData } from "@/components/CallsTable";
+import CallViewer from "@/components/CallViewer";
+import IngestionTriggers from "@/components/IngestionTriggers";
+import { humanAiNote, type CallRowGrade } from "@/lib/callGrade";
+import { downloadJson } from "@/lib/downloadRecording";
 import {
   computeStats,
   deltaOf,
   currentCycle,
   cycleByIndex,
   parseTrackingStart,
-  fmtDateTime,
-  fmtDuration,
   fmtSeconds,
   gradeBand,
-  gradeBandClasses,
   GRADE_TARGET,
   SHORT_CALL_SECONDS,
   GOOD_TEXT,
   BAD_TEXT,
   CALLOUT_TEXT,
-  CALLOUT_BADGE,
   CALLOUT_CARD,
   FALLBACK_CYCLE_ANCHOR,
   type Preset,
   type Stats,
   type DashCall,
+  type DashCallGrade,
   type TrendGradeRow,
   type TrendDurationRow,
 } from "@/lib/dashboard";
@@ -42,7 +42,6 @@ const TH = "py-2.5 px-3 font-medium text-left";
 const TH_R = "py-2.5 px-3 font-medium text-right";
 const TD = "py-2 px-3";
 const TD_R = "py-2 px-3 text-right tabular-nums";
-const BADGE = "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums";
 // Loading overlay for range-driven content (KPI cards / tables) while a range
 // refetch is in flight — one obvious "refreshing" signal over stale numbers.
 const OVERLAY =
@@ -100,6 +99,32 @@ async function fetchCalls(fromMs: number, toMs: number): Promise<DashCall[]> {
   return Array.isArray(data.calls) ? data.calls : [];
 }
 
+// Map an ingested dashboard call into the shared calls-table row shape so the
+// dashboard renders the exact same columns + detail modal as /calls. Prod calls
+// have no app user / human rating / note, so those columns show "Retell" / "—".
+function dashCallToRow(c: DashCall, classNames: Map<string, string>): CallRowData {
+  const g = c.call_grades;
+  const start = c.timestamp ?? undefined;
+  const end =
+    start != null && c.duration_seconds != null
+      ? start + c.duration_seconds * 1000
+      : undefined;
+  return {
+    call_id: c.retell_call_id,
+    agent_name: c.voice_name ?? (c.agent_version ? `Agent v${c.agent_version}` : null),
+    call_type: c.agent_version ? `v${c.agent_version}` : undefined,
+    direction: "inbound",
+    start_timestamp: start,
+    end_timestamp: end,
+    recording_url: c.recording_url ?? undefined,
+    from_number: c.phone_number ?? undefined,
+    rep_score: g?.rep_score ?? null,
+    grade100: g?.grade ?? null,
+    ai_callout: g?.ai_callout ?? false,
+    ai_note: g ? humanAiNote({ ...g, ai_callout_quote: null }, classNames) : null,
+  };
+}
+
 function DashboardContent() {
   const { toast } = useToast();
   const { rubric, rubricLoaded } = useDashboardData();
@@ -126,6 +151,27 @@ function DashboardContent() {
   const [repBandFilter, setRepBandFilter] = useState("all");
   const [hideShort, setHideShort] = useState(true);
   const [search, setSearch] = useState("");
+
+  // Shared calls-table interaction state (inline audio + detail modal).
+  const [playingCallId, setPlayingCallId] = useState<string | null>(null);
+  const [viewingCallId, setViewingCallId] = useState<string | null>(null);
+
+  // Admin-only Retell backfill section (collapsed by default). A 200 from the
+  // admin config route means the current user is an admin; the ingestion routes
+  // are admin-gated regardless.
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [backfillOpen, setBackfillOpen] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/config")
+      .then((r) => {
+        if (!cancelled) setIsAdmin(r.ok);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const range = useMemo(() => {
     if (preset === "this_cycle") return { from: cycle.start, to: cycle.end };
@@ -268,6 +314,38 @@ function DashboardContent() {
   const thisStats = useMemo(() => computeStats(thisCycleCalls), [thisCycleCalls]);
   const prevStats = useMemo(() => computeStats(prevCycleCalls), [prevCycleCalls]);
 
+  // Failure-class key→name map + the filtered calls projected into the shared
+  // calls-table row shape (identical columns/modal to /calls).
+  const classNames = useMemo(
+    () => new Map(failureClasses.map((c) => [c.key, c.name])),
+    [failureClasses]
+  );
+  const callRows = useMemo(
+    () => filtered.map((c) => dashCallToRow(c, classNames)),
+    [filtered, classNames]
+  );
+
+  // Reflect a manual "Grade call" (row button or modal) without a refetch.
+  function handleAiGraded(callId: string, grade: CallRowGrade) {
+    setRangeCalls((prev) =>
+      prev.map((c) =>
+        c.retell_call_id === callId
+          ? { ...c, call_grades: grade.call_grades as unknown as DashCallGrade }
+          : c
+      )
+    );
+  }
+
+  async function handleCallDownload(callId: string) {
+    try {
+      const res = await fetch(`/api/calls/${callId}`);
+      if (!res.ok) throw new Error("Failed to fetch call data");
+      downloadJson(await res.json(), `${callId}.json`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Download failed", "error");
+    }
+  }
+
   const leaderboard = useMemo(() => {
     return failureClasses
       .map((cls) => {
@@ -352,6 +430,32 @@ function DashboardContent() {
         </div>
         <div className="text-xs text-zinc-500">Previous cycle: {prev.label}</div>
       </div>
+
+      {/* Retell backfill (admin-only, collapsible) — moved here from the admin
+          panel so ingestion is triggered where the data lands. */}
+      {isAdmin && (
+        <div className={CARD}>
+          <button
+            onClick={() => setBackfillOpen((o) => !o)}
+            className="w-full flex items-center justify-between p-4 text-left"
+            aria-expanded={backfillOpen}
+          >
+            <span className="flex items-center gap-2 text-base font-semibold">
+              <Database size={16} className="text-zinc-500" />
+              Retell backfill
+            </span>
+            <ChevronDown
+              size={18}
+              className={`text-zinc-400 transition-transform ${backfillOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+          {backfillOpen && (
+            <div className="px-4 pb-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+              <IngestionTriggers />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filters */}
       <div className={CARD}>
@@ -558,46 +662,39 @@ function DashboardContent() {
             </button>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-y border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 text-xs uppercase tracking-wide text-zinc-500">
-                <th className={TH}>When</th>
-                <th className={TH}>Duration</th>
-                <th className={TH}>Agent ver.</th>
-                <th className={TH}>Grade</th>
-                <th className={TH}>Rep</th>
-                <th className={TH}>Worst failed</th>
-                <th className={TH}>AI callout</th>
-                <th className={TH}>Audio</th>
-                <th className={TH}>Phone</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rangeLoading && filtered.length === 0 &&
-                Array.from({ length: 4 }).map((_, i) => (
-                  <tr key={i} className="border-b border-zinc-100 dark:border-zinc-900">
-                    <td colSpan={9} className="px-3 py-2.5">
-                      <Skeleton className="h-4 w-full" />
-                    </td>
-                  </tr>
-                ))}
-              {filtered.map((c) => (
-                <CallRow key={c.id} call={c} classes={failureClasses} />
+        <div className="px-4 pb-4">
+          {rangeLoading && filtered.length === 0 ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
               ))}
-              {!rangeLoading && filtered.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="text-center text-sm text-zinc-500 py-8">
-                    No calls match these filters.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center text-sm text-zinc-500 py-8">
+              No calls match these filters.
+            </div>
+          ) : (
+            <CallsTable
+              calls={callRows}
+              playingCallId={playingCallId}
+              onTogglePlay={(id) => setPlayingCallId((prev) => (prev === id ? null : id))}
+              onViewDetails={(id) => setViewingCallId(id)}
+              onAiGraded={handleAiGraded}
+            />
+          )}
         </div>
       </div>
         </div>
       </div>
+
+      {viewingCallId && (
+        <CallViewer
+          callId={viewingCallId}
+          onClose={() => setViewingCallId(null)}
+          onDownload={handleCallDownload}
+          onAiGraded={handleAiGraded}
+        />
+      )}
     </div>
   );
 }
@@ -695,81 +792,6 @@ function CalloutCard({ value, delta, count }: { value: number | null; delta: num
       </div>
       <div className="text-xs text-zinc-500 mt-2">{count} calls</div>
     </div>
-  );
-}
-
-// --- Calls table row ---------------------------------------------------------
-
-function worstFailedClass(call: DashCall, classes: FailureClass[]): string | null {
-  const results = call.call_grades?.results ?? {};
-  for (const c of classes) {
-    const r = results[c.key] as { applicable: boolean; passed: boolean } | undefined;
-    if (r?.applicable && !r.passed) return c.name;
-  }
-  return null;
-}
-
-function CallRow({ call, classes }: { call: DashCall; classes: FailureClass[] }) {
-  const [showAudio, setShowAudio] = useState(false);
-  const grade = call.call_grades?.grade ?? null;
-  const rep = call.call_grades?.rep_score ?? null;
-  const worst = worstFailedClass(call, classes);
-  return (
-    <tr className="border-b border-zinc-100 dark:border-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-900/50 transition-colors">
-      <td className={TD}>
-        <Link href={`/dashboard/calls/${call.id}`} className="text-blue-600 dark:text-blue-400 hover:underline">
-          {call.timestamp == null ? "—" : fmtDateTime(call.timestamp)}
-        </Link>
-      </td>
-      <td className={`${TD} tabular-nums`}>{fmtDuration(call.duration_seconds)}</td>
-      <td className={TD}>{call.agent_version ?? "—"}</td>
-      <td className={TD}>
-        <span className={`${BADGE} ${gradeBandClasses(gradeBand(grade))}`}>
-          {grade == null ? "n/a" : `${Math.round(grade)}`}
-        </span>
-      </td>
-      <td className={TD}>
-        <span className={`${BADGE} ${gradeBandClasses(gradeBand(rep))}`}>
-          {rep == null ? "n/a" : `${Math.round(rep)}`}
-        </span>
-      </td>
-      <td className={`${TD} text-xs`}>
-        {worst ? (
-          <span className="inline-flex items-center rounded-md border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5">
-            {worst}
-          </span>
-        ) : (
-          <span className="text-zinc-500">—</span>
-        )}
-      </td>
-      <td className={TD}>
-        {call.call_grades?.ai_callout ? (
-          <span className={`${BADGE} ${CALLOUT_BADGE}`}>Detected</span>
-        ) : (
-          <span className="text-xs text-zinc-500">—</span>
-        )}
-      </td>
-      <td className={TD}>
-        {call.recording_url ? (
-          showAudio ? (
-            <div className="min-w-[220px]">
-              <AudioPlayer src={call.recording_url} />
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowAudio(true)}
-              title="Play"
-              className="w-7 h-7 flex items-center justify-center rounded-full text-zinc-400 hover:text-blue-600 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-            >
-              <Play size={14} />
-            </button>
-          )
-        ) : (
-          <span className="text-xs text-zinc-500">—</span>
-        )}
-      </td>
-      <td className={`${TD} text-xs text-zinc-500 tabular-nums`}>{call.phone_number ?? "—"}</td>
-    </tr>
   );
 }
 

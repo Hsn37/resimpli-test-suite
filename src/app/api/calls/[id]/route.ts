@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { getAgent, getCall } from "@/lib/retell";
-import { getCallGradesByIds, getCallLogsByIds } from "@/lib/db";
+import { getCallGradesByIds, getCallLogsByIds, type CallGrade } from "@/lib/db";
 import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 import { scoreToStars } from "@/lib/grade";
-import { ensureCallGraded } from "@/lib/grading";
+import { gradeRetellCall } from "@/lib/grading";
+
+// Grading polls OpenAI on a cache miss, so give the route headroom.
+export const maxDuration = 30;
 
 export async function GET(
   _request: Request,
@@ -30,19 +33,23 @@ export async function GET(
     // gracefully if the DB is unreachable.
     const [logs, callGrades] = await Promise.all([
       getCallLogsByIds(workspace, [id]).catch(() => new Map()),
-      getCallGradesByIds(workspace, [id]).catch(() => new Map()),
+      getCallGradesByIds(workspace, [id]).catch(() => new Map<string, CallGrade>()),
     ]);
     const log = logs.get(id);
     const metaUser = (call.metadata as { user?: string } | undefined)?.user;
     // DB stores the rating as a score out of 10; convert to a star count.
     const grade = log?.grade != null ? scoreToStars(log.grade) : null;
 
-    const aiGrade = await ensureCallGraded(
-      id,
-      call.transcript_object,
-      call.retell_llm_dynamic_variables,
-      workspace
-    );
+    // Lazily grade via the unified 0-100 path when this call has no grade yet
+    // and a transcript exists — so opening a call populates the same
+    // call_grades breakdown the list + dashboard render.
+    let callGrade: CallGrade | null = callGrades.get(id) ?? null;
+    if (!callGrade) {
+      const turns = call.transcript_object as unknown[] | undefined;
+      if (Array.isArray(turns) && turns.length > 0) {
+        callGrade = await gradeRetellCall(workspace, id, apiKey, call).catch(() => null);
+      }
+    }
 
     return NextResponse.json({
       ...call,
@@ -50,8 +57,7 @@ export async function GET(
       grade,
       note: log?.note ?? null,
       user_email: log?.user_email ?? metaUser ?? null,
-      ai_grade: aiGrade,
-      call_grades: callGrades.get(id) ?? null,
+      call_grades: callGrade,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to get call";

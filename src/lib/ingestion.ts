@@ -256,6 +256,11 @@ export async function ingestCall(opts: {
   apiKey: string | undefined;
   enrich?: boolean;
   rawPayload?: unknown;
+  // Manual "Grade call" path: ingest regardless of the inbound / allowlist /
+  // tracking-start / duration filters (the user explicitly asked to grade this
+  // call). Only a missing call id or an empty transcript still drop it, since
+  // those make grading impossible.
+  bypassEligibility?: boolean;
 }): Promise<IngestResult> {
   const { workspace, allowlist, trackingStart, apiKey } = opts;
   let call = opts.call;
@@ -271,8 +276,16 @@ export async function ingestCall(opts: {
   }
 
   const verdict = evaluateCall(call, allowlist, trackingStart);
-  if (verdict.skip) {
-    return { callRowId: null, skip: verdict.skip, directionMissing: verdict.directionMissing };
+  // In bypass mode only the un-gradeable skips (no id / empty transcript) block
+  // ingestion; the derived fields are computed regardless of the skip verdict.
+  const hardSkip =
+    opts.bypassEligibility &&
+    verdict.skip !== SKIP.missingCallId &&
+    verdict.skip !== SKIP.emptyTranscript
+      ? null
+      : verdict.skip;
+  if (hardSkip) {
+    return { callRowId: null, skip: hardSkip, directionMissing: verdict.directionMissing };
   }
 
   const { voice_id, voice_name } = await lookupOrFetchVoice(workspace, verdict.agentId, apiKey);

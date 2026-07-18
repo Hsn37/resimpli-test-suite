@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
-import Stars from "./Stars";
 import {
   gradeBand,
   gradeBandClasses,
@@ -31,13 +30,11 @@ interface RubricRow {
   name: string;
 }
 
-// Stars render 0-10; the full grade is 0-100. Scale at the UI edge only.
-const REP_STARS_DIVISOR = 10;
 const BADGE = "inline-flex items-center rounded-md px-2 py-0.5 text-sm font-semibold";
 const DEFAULT_CALLOUT_NOTE = "Caller indicated suspicion of AI.";
 
 /**
- * Rich per-call grade breakdown: rep-score-as-stars + grade/100 chip + an
+ * Rich per-call grade breakdown: rep-score/100 + grade/100 chips + an
  * AI-callout card + per-rep-dimension scorecard + per-failure-class results
  * with evidence. Reuses the dashboard's gradeBand/theme helpers. Fetches the
  * workspace rubric (key→name) itself so callers only pass the grade row.
@@ -66,17 +63,8 @@ export default function GradeBreakdown({ grade }: { grade: CallGradeBreakdown })
 
   return (
     <div className="space-y-4">
-      {/* Headline: rep stars + grade/100 */}
+      {/* Headline: rep score + grade, both as banded /100 chips */}
       <div className="flex flex-wrap items-center gap-3">
-        {rep != null ? (
-          <Stars
-            value={Math.round(rep / REP_STARS_DIVISOR)}
-            size={20}
-            filledClass="fill-purple-500 text-purple-500"
-          />
-        ) : (
-          <span className="text-sm text-zinc-500">No rep score.</span>
-        )}
         <span className={`${BADGE} ${gradeBandClasses(gradeBand(rep))}`}>
           {rep == null ? "n/a" : `${Math.round(rep)}`}
           {rep != null && <span className="text-xs opacity-70 ml-0.5">/100</span>}
