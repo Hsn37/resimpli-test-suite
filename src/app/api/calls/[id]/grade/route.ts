@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCall } from "@/lib/retell";
-import { ensureCallGraded } from "@/lib/grader";
+import { ensureCallGraded } from "@/lib/grading";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 
 // Manual "Grade call" trigger. Grading itself polls for up to ~15s, so give
 // this route enough headroom to finish before the platform kills it.
@@ -12,11 +13,13 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const call = await getCall(id);
+    const workspace = await getServerWorkspace();
+    const call = await getCall(id, retellKeyForWorkspace(workspace));
     const aiGrade = await ensureCallGraded(
       id,
       call.transcript_object,
-      call.retell_llm_dynamic_variables
+      call.retell_llm_dynamic_variables,
+      workspace
     );
 
     if (!aiGrade) {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, FlaskConical, Plus } from "lucide-react";
+import { FlaskConical, Plus } from "lucide-react";
 import { ToastProvider, useToast } from "@/components/Toast";
 import BatchRunRow, { type BatchRunSummary } from "@/components/BatchRunRow";
 import Skeleton from "@/components/Skeleton";
@@ -56,12 +56,6 @@ function BatchTestsContent() {
   return (
     <div className="max-w-5xl mx-auto p-8">
       <div className="flex items-center gap-3 mb-6">
-        <Link
-          href="/"
-          className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
-        >
-          <ArrowLeft size={18} />
-        </Link>
         <h1 className="font-semibold text-lg flex items-center gap-2 flex-1">
           <FlaskConical size={18} />
           Batch Tests

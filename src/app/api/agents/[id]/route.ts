@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAgent, getAgentVersions } from "@/lib/retell";
 import { getAgentSetting } from "@/lib/db";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 import { ALL_AGENTS_TAG } from "@/lib/presets";
 
 export async function GET(
@@ -9,13 +10,15 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const workspace = await getServerWorkspace();
+    const apiKey = retellKeyForWorkspace(workspace);
     const [agent, versions, setting] = await Promise.all([
-      getAgent(id),
-      getAgentVersions(id).catch(() => []),
+      getAgent(id, apiKey),
+      getAgentVersions(id, apiKey).catch(() => []),
       // Fail open (treat as enabled/untagged) rather than 500ing this whole
       // endpoint if the settings DB has a transient hiccup — Retell, not this
       // table, is the source of truth for whether the agent itself exists.
-      getAgentSetting(id).catch(() => ({ agent_id: id, enabled: true, tag: ALL_AGENTS_TAG })),
+      getAgentSetting(workspace, id).catch(() => ({ agent_id: id, enabled: true, tag: ALL_AGENTS_TAG })),
     ]);
 
     if (!setting.enabled) {

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getAiGradesForSubjects, insertAiGrade, updateBatchTestRunCounts } from "@/lib/db";
 import { getBatchTest, listAllTestRuns } from "@/lib/retell";
-import { gradeTranscript } from "@/lib/grader";
-import type { TranscriptTurn } from "@/components/TranscriptView";
+import { gradeTranscript } from "@/lib/grading";
+import { getServerWorkspace } from "@/lib/workspaceServer";
+import type { TranscriptTurn } from "@/lib/transcript";
 
 const TERMINAL_RUN_STATUSES = new Set(["pass", "fail", "error"]);
 const GRADING_CONCURRENCY = 4;
@@ -43,6 +44,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const workspace = await getServerWorkspace();
     const [batch, testRunsRaw] = await Promise.all([
       getBatchTest(id),
       listAllTestRuns(id),
@@ -79,17 +81,17 @@ export async function GET(
       }
 
       try {
-        const context: Record<string, string> = {};
-        for (const [k, v] of Object.entries(run.transcript_snapshot?.dynamicVariables ?? {})) {
-          context[k] = String(v);
-        }
-        const result = await gradeTranscript(transcript, context);
+        const result = await gradeTranscript(
+          workspace,
+          transcript,
+          run.transcript_snapshot?.dynamicVariables ?? {}
+        );
+        if (!result) return run;
         await insertAiGrade({
           subjectType: "test_run",
           subjectId: jobId,
           score: result.score,
           note: result.note,
-          chatId: result.chatId,
         });
         return { ...run, ai_grade: { score: result.score, note: result.note } };
       } catch {

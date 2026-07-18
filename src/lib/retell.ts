@@ -6,54 +6,60 @@ function getApiKey(): string {
   return key;
 }
 
-function headers(): HeadersInit {
+// Every request resolves its key here. Callers may pass a workspace-specific
+// key (see retellKeyForWorkspace); omitting it keeps the pre-workspace behaviour
+// of using the shared RETELL_API_KEY, so existing callers stay unchanged.
+function headers(apiKey?: string): HeadersInit {
   return {
-    Authorization: `Bearer ${getApiKey()}`,
+    Authorization: `Bearer ${apiKey ?? getApiKey()}`,
     "Content-Type": "application/json",
   };
 }
 
-export async function listAgents() {
+export async function listAgents(apiKey?: string) {
   // is_latest=true returns one entry per agent (its latest version). Without
   // it, /list-agents returns every version, so name lookups can resolve to a
   // stale pre-rename name depending on which version is read last.
   const res = await fetch(`${RETELL_BASE_URL}/list-agents?is_latest=true`, {
     method: "GET",
-    headers: headers(),
+    headers: headers(apiKey),
   });
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
 }
 
-export async function getAgent(agentId: string) {
+export async function getAgent(agentId: string, apiKey?: string) {
   const res = await fetch(`${RETELL_BASE_URL}/get-agent/${agentId}`, {
     method: "GET",
-    headers: headers(),
+    headers: headers(apiKey),
   });
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
 }
 
-export async function getAgentVersions(agentId: string) {
+export async function getAgentVersions(agentId: string, apiKey?: string) {
   const res = await fetch(
     `${RETELL_BASE_URL}/get-agent-versions/${agentId}`,
-    { method: "GET", headers: headers() }
+    { method: "GET", headers: headers(apiKey) }
   );
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
 }
 
-export async function createWebCall(body: {
-  agent_id: string;
-  retell_llm_dynamic_variables?: Record<string, string>;
-  metadata?: Record<string, string>;
-  agent_override?: {
-    conversation_flow?: { start_speaker?: "agent" | "user" };
-  };
-}) {
+export async function createWebCall(
+  body: {
+    agent_id: string;
+    retell_llm_dynamic_variables?: Record<string, string>;
+    metadata?: Record<string, string>;
+    agent_override?: {
+      conversation_flow?: { start_speaker?: "agent" | "user" };
+    };
+  },
+  apiKey?: string
+) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/create-web-call`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(apiKey),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -63,16 +69,22 @@ export async function createWebCall(body: {
   return res.json();
 }
 
-export async function listCalls(body: {
-  limit?: number;
-  pagination_key?: string;
-} = {}) {
+export async function listCalls(
+  body: {
+    limit?: number;
+    pagination_key?: string;
+    filter_criteria?: Record<string, unknown>;
+    sort_order?: "ascending" | "descending";
+  } = {},
+  apiKey?: string
+) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/list-calls`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(apiKey),
     body: JSON.stringify({
-      sort_order: "descending",
+      sort_order: body.sort_order ?? "descending",
       limit: body.limit ?? 50,
+      ...(body.filter_criteria ? { filter_criteria: body.filter_criteria } : {}),
       ...(body.pagination_key ? { pagination_key: body.pagination_key } : {}),
     }),
   });
@@ -80,10 +92,10 @@ export async function listCalls(body: {
   return res.json();
 }
 
-export async function getCall(callId: string) {
+export async function getCall(callId: string, apiKey?: string) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/get-call/${callId}`, {
     method: "GET",
-    headers: headers(),
+    headers: headers(apiKey),
   });
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
@@ -115,10 +127,13 @@ export interface TestCaseDefinitionInput {
   llm_model: string;
 }
 
-export async function createTestCaseDefinition(body: TestCaseDefinitionInput) {
+export async function createTestCaseDefinition(
+  body: TestCaseDefinitionInput,
+  apiKey?: string
+) {
   const res = await fetch(`${RETELL_BASE_URL}/create-test-case-definition`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(apiKey),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -128,13 +143,16 @@ export async function createTestCaseDefinition(body: TestCaseDefinitionInput) {
   return res.json();
 }
 
-export async function createBatchTest(body: {
-  response_engine: ResponseEngine;
-  test_case_definition_ids: string[];
-}) {
+export async function createBatchTest(
+  body: {
+    response_engine: ResponseEngine;
+    test_case_definition_ids: string[];
+  },
+  apiKey?: string
+) {
   const res = await fetch(`${RETELL_BASE_URL}/create-batch-test`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(apiKey),
     body: JSON.stringify(body),
   });
   if (!res.ok) {

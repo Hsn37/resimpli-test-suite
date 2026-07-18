@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import Link from "next/link";
 import {
-  ArrowLeft,
+  AlertTriangle,
   ArrowDownLeft,
   ArrowUpRight,
   ChevronLeft,
@@ -24,6 +23,7 @@ import AudioPlayer from "@/components/AudioPlayer";
 import CallViewer from "@/components/CallViewer";
 import Stars from "@/components/Stars";
 import { gradeCall } from "@/lib/callLog";
+import { gradeBand, gradeBandClasses, CALLOUT_TEXT } from "@/lib/dashboard";
 import {
   downloadCsv,
   downloadJson,
@@ -46,9 +46,17 @@ interface RetellCall {
   note?: string | null;
   user_email?: string | null;
   ai_grade?: { score: number; note: string } | null;
+  // Full 0-100 grade (from call_grades) — the meaningful headline score.
+  rep_score?: number | null;
+  grade100?: number | null;
+  ai_callout?: boolean;
+  ai_note?: string | null;
 }
 
 type SortKey = "newest" | "rating-desc" | "rating-asc";
+
+// Stars render 0-10; the full grade is 0-100. Scale at the UI edge only.
+const REP_STARS_DIVISOR = 10;
 
 // Shared `/share/<id>` path builder so the row Share button and the CSV export
 // produce identical links. Caller prefixes window.location.origin.
@@ -377,7 +385,29 @@ function CallRow({
           )}
         </td>
         <td className="py-3 px-3 whitespace-nowrap">
-          {call.ai_grade ? (
+          {call.rep_score != null ? (
+            // Lead with the meaningful 0-100 rep_score rendered as 0-10 stars,
+            // plus a small grade/100 chip banded by gradeBand.
+            <div className="flex flex-col items-start gap-1">
+              <Stars
+                value={Math.round(call.rep_score / REP_STARS_DIVISOR)}
+                size={13}
+                filledClass="fill-purple-500 text-purple-500"
+                emptyClass="text-zinc-200 dark:text-zinc-700"
+              />
+              {call.grade100 != null && (
+                <span
+                  className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${gradeBandClasses(
+                    gradeBand(call.grade100)
+                  )}`}
+                >
+                  {Math.round(call.grade100)}
+                  <span className="opacity-70 ml-0.5">/100</span>
+                </span>
+              )}
+            </div>
+          ) : call.ai_grade ? (
+            // Dev fallback: the legacy 0-10 ai_grades score.
             <Stars
               value={call.ai_grade.score}
               size={13}
@@ -396,7 +426,18 @@ function CallRow({
           )}
         </td>
         <td className="py-3 px-3 min-w-0 text-zinc-600 dark:text-zinc-400">
-          {call.ai_grade?.note && <ExpandableText text={call.ai_grade.note} />}
+          {(() => {
+            const aiNote = call.ai_note ?? call.ai_grade?.note ?? null;
+            if (!aiNote) return null;
+            return (
+              <div className="flex items-start gap-1.5 min-w-0">
+                {call.ai_callout && (
+                  <AlertTriangle size={13} className={`shrink-0 mt-0.5 ${CALLOUT_TEXT}`} />
+                )}
+                <ExpandableText text={aiNote} />
+              </div>
+            );
+          })()}
         </td>
         <td
           className="py-3 pl-3 pr-4 text-right whitespace-nowrap"
@@ -451,7 +492,9 @@ const PAGE_SIZE = 50;
 // How many recent calls to load up front. The page filters, sorts, and
 // paginates over this whole window client-side (Retell owns the calls; our DB
 // owns user/grade/note, so cross-field filtering can't be a single query).
-const FETCH_LIMIT = 1000;
+// Kept at the list API's ceiling so the page isn't silently capped below the
+// full workspace history (was 1000, which hid older calls once volume grew).
+const FETCH_LIMIT = 5000;
 
 function CallsContent() {
   const [calls, setCalls] = useState<RetellCall[]>([]);
@@ -623,14 +666,8 @@ function CallsContent() {
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <div className="max-w-7xl mx-auto p-8">
+    <div className="w-full p-6 lg:p-8">
       <div className="flex items-center gap-3 mb-6">
-        <Link
-          href="/"
-          className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
-        >
-          <ArrowLeft size={18} />
-        </Link>
         <h1 className="font-semibold text-lg flex items-center gap-2">
           <Phone size={18} />
           Calls
@@ -784,8 +821,8 @@ function CallsContent() {
           {calls.length === 0 ? "No calls yet." : "No calls match your filters."}
         </div>
       ) : (
-        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-          <table className="w-full text-sm border-collapse table-fixed">
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-x-auto">
+          <table className="w-full min-w-[1024px] text-sm border-collapse table-fixed">
             <colgroup>
               <col className="w-10" />
               <col className="w-48" />
@@ -794,7 +831,7 @@ function CallsContent() {
               <col className="w-28" />
               <col className="w-16" />
               <col className="w-40" />
-              <col className="w-16" />
+              <col className="w-24" />
               <col className="w-40" />
               <col className="w-32" />
             </colgroup>

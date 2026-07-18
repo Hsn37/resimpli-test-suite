@@ -1,8 +1,11 @@
+// LEGACY: Retell grader — superseded by src/lib/openaiGrader.ts. Kept for
+// reference, intentionally unwired. No live path imports this module anymore
+// (call sites moved to src/lib/grading.ts). Do not re-wire without a decision.
 import "server-only";
 import { createChat, createChatCompletion, endChat, getCall, getChat } from "./retell";
 import { getAiGrade, insertAiGrade } from "./db";
 import { SCORE_MAX } from "./grade";
-import type { TranscriptTurn } from "@/components/TranscriptView";
+import type { TranscriptTurn } from "./transcript";
 
 function getGraderAgentId(): string {
   const id = process.env.RETELL_GRADER_AGENT_ID;

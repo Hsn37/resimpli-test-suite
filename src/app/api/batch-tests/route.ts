@@ -5,6 +5,7 @@ import {
   createTestCaseDefinition,
   type ResponseEngine,
 } from "@/lib/retell";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 import type { TestCase } from "@/lib/testCase";
 
 type CaseInput = Omit<TestCase, "id">;
@@ -56,7 +57,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const setting = await getAgentSetting(agent_id).catch(() => ({
+    const workspace = await getServerWorkspace();
+    const retellKey = retellKeyForWorkspace(workspace);
+    const setting = await getAgentSetting(workspace, agent_id).catch(() => ({
       agent_id,
       enabled: true,
       tag: "all",
@@ -95,17 +98,22 @@ export async function POST(request: Request) {
       );
     }
 
+    // F-2: run the test-case + batch creation on the active workspace's Retell
+    // key so dev/prod land in the right Retell account once keys differ.
     const definitionIds: string[] = [];
     for (const c of casesToRun) {
-      const result = await createTestCaseDefinition({
-        response_engine,
-        name: c.name,
-        user_prompt: c.user_prompt,
-        metrics: c.metrics,
-        dynamic_variables: c.dynamic_variables,
-        tool_mocks: c.tool_mocks,
-        llm_model: c.llm_model,
-      });
+      const result = await createTestCaseDefinition(
+        {
+          response_engine,
+          name: c.name,
+          user_prompt: c.user_prompt,
+          metrics: c.metrics,
+          dynamic_variables: c.dynamic_variables,
+          tool_mocks: c.tool_mocks,
+          llm_model: c.llm_model,
+        },
+        retellKey
+      );
       const definitionId = result.test_case_definition_id || result.id;
       if (!definitionId) {
         throw new Error(`No test_case_definition_id returned for case "${c.name}"`);
@@ -113,10 +121,13 @@ export async function POST(request: Request) {
       definitionIds.push(definitionId);
     }
 
-    const batch = await createBatchTest({
-      response_engine,
-      test_case_definition_ids: definitionIds,
-    });
+    const batch = await createBatchTest(
+      {
+        response_engine,
+        test_case_definition_ids: definitionIds,
+      },
+      retellKey
+    );
     const batchId: string = batch.test_case_batch_job_id || batch.id;
     if (!batchId) {
       throw new Error("No test_case_batch_job_id returned from create-batch-test");

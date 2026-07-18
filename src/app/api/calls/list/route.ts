@@ -1,13 +1,54 @@
 import { NextResponse, after } from "next/server";
 import { listAgents, listCalls } from "@/lib/retell";
-import { getAiGradesForSubjects, getCallLogsByIds } from "@/lib/db";
+import {
+  getAiGradesForSubjects,
+  getCallGradesByIds,
+  getCallLogsByIds,
+  listFailureClasses,
+  type CallGrade,
+} from "@/lib/db";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 import { scoreToStars } from "@/lib/grade";
-import { ensureCallGraded } from "@/lib/grader";
-import type { TranscriptTurn } from "@/components/TranscriptView";
+import { ensureCallGraded } from "@/lib/grading";
+import type { TranscriptTurn } from "@/lib/transcript";
 
 interface RetellAgent {
   agent_id: string;
   agent_name?: string;
+}
+
+// A failure-class `results` entry (per-check applicability + pass/fail + quote).
+interface FailureResult {
+  applicable: boolean;
+  passed: boolean;
+  evidence: string;
+}
+
+// Default AI-note copy when a caller-suspected-AI callout carries no quote.
+const DEFAULT_CALLOUT_NOTE = "Caller suspected AI";
+
+/**
+ * Compose the human-readable AI note from a full call_grades row:
+ *   1. AI callout → its quote (or a short default),
+ *   2. else the first applicable-but-failed class by its human `name`,
+ *   3. else a compact "Passed X/Y checks" summary.
+ * `classNames` maps failure-class key → display name (from listFailureClasses).
+ */
+function humanAiNote(
+  grade: CallGrade,
+  classNames: Map<string, string>
+): string {
+  if (grade.ai_callout) {
+    return grade.ai_callout_quote?.trim() || DEFAULT_CALLOUT_NOTE;
+  }
+  const failed = Object.entries(grade.results as Record<string, FailureResult>).find(
+    ([, r]) => r?.applicable && !r?.passed
+  );
+  if (failed) {
+    const [key] = failed;
+    return `Top issue: ${classNames.get(key) ?? key}`;
+  }
+  return `Passed ${grade.passed_count}/${grade.applicable_count} checks`;
 }
 
 // Cap on how many ungraded calls we'll kick off grading for per page load,
@@ -32,8 +73,11 @@ export async function GET(request: Request) {
         ? Math.min(parsedLimit, 5000)
         : 50;
 
+    const workspace = await getServerWorkspace();
+    const apiKey = retellKeyForWorkspace(workspace);
+
     // Kick off the agent-name lookup in parallel with paging through calls.
-    const agentsPromise = listAgents().catch(() => [] as RetellAgent[]);
+    const agentsPromise = listAgents(apiKey).catch(() => [] as RetellAgent[]);
 
     // Retell caps a single list-calls request at 1000, so page through it
     // (newest first) until we reach the target or run out of calls.
@@ -41,10 +85,13 @@ export async function GET(request: Request) {
     const callList: Array<Record<string, unknown>> = [];
     let cursor = searchParams.get("pagination_key") || undefined;
     while (callList.length < target) {
-      const batch = (await listCalls({
-        limit: Math.min(PER_REQUEST, target - callList.length),
-        pagination_key: cursor,
-      })) as Array<Record<string, unknown>>;
+      const batch = (await listCalls(
+        {
+          limit: Math.min(PER_REQUEST, target - callList.length),
+          pagination_key: cursor,
+        },
+        apiKey
+      )) as Array<Record<string, unknown>>;
       if (batch.length === 0) break;
       callList.push(...batch);
       if (batch.length < PER_REQUEST) break; // No more pages.
@@ -59,14 +106,23 @@ export async function GET(request: Request) {
     // Enrich with our own call logs (grade/note/user) for calls placed from
     // within this tool. Degrades gracefully if the DB is unreachable.
     const callIds = callList.map((c) => String(c.call_id));
-    const [logs, aiGrades] = await Promise.all([
-      getCallLogsByIds(callIds).catch(() => new Map()),
+    // Also bulk-fetch the full 0-100 call_grades (workspace-scoped) + the
+    // failure-class name map so /calls can lead with rep_score-as-stars and a
+    // human note. All degrade gracefully so a DB hiccup never breaks the list.
+    const [logs, aiGrades, callGrades, failureClasses] = await Promise.all([
+      getCallLogsByIds(workspace, callIds).catch(() => new Map()),
       getAiGradesForSubjects("call", callIds).catch(() => new Map()),
+      getCallGradesByIds(workspace, callIds).catch(() => new Map<string, CallGrade>()),
+      listFailureClasses(workspace).catch(() => []),
     ]);
+    const classNames = new Map<string, string>(
+      failureClasses.map((c) => [c.key, c.name])
+    );
 
     const enriched = callList.map((call) => {
       const log = logs.get(String(call.call_id));
       const aiGrade = aiGrades.get(String(call.call_id));
+      const callGrade = callGrades.get(String(call.call_id)) as CallGrade | undefined;
       // Prefer our DB record; fall back to the user we stamped into the Retell
       // call metadata at creation time (covers calls placed from this tool).
       const metaUser = (call.metadata as { user?: string } | undefined)?.user;
@@ -79,6 +135,13 @@ export async function GET(request: Request) {
         grade,
         note: log?.note ?? null,
         user_email: log?.user_email ?? metaUser ?? null,
+        // Full 0-100 grade (from call_grades) drives the headline rep-stars +
+        // grade/100 chip + human note. Kept null when the call has no grade
+        // row; the 0-10 ai_grade below is the dev fallback.
+        rep_score: callGrade?.rep_score ?? null,
+        grade100: callGrade?.grade ?? null,
+        ai_callout: callGrade?.ai_callout ?? false,
+        ai_note: callGrade ? humanAiNote(callGrade, classNames) : null,
         ai_grade: aiGrade ? { score: aiGrade.score, note: aiGrade.note } : null,
       };
     });
@@ -101,7 +164,8 @@ export async function GET(request: Request) {
             ensureCallGraded(
               String(call.call_id),
               call.transcript_object as TranscriptTurn[] | undefined,
-              call.retell_llm_dynamic_variables as Record<string, unknown> | undefined
+              call.retell_llm_dynamic_variables as Record<string, unknown> | undefined,
+              workspace
             ).catch((err) =>
               console.error(`[grading] failed to auto-grade call ${call.call_id}:`, err)
             )

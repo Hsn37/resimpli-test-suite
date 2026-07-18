@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { listAgents } from "@/lib/retell";
 import { getRecentCallLogs } from "@/lib/db";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 import { scoreToStars } from "@/lib/grade";
 
 interface RetellAgent {
@@ -29,9 +30,10 @@ export async function GET(request: Request) {
         ? Math.min(parsedLimit, 100)
         : 20;
 
+    const workspace = await getServerWorkspace();
     const [logs, agents] = await Promise.all([
-      getRecentCallLogs(email, limit),
-      listAgents().catch(() => [] as RetellAgent[]),
+      getRecentCallLogs(workspace, email, limit),
+      listAgents(retellKeyForWorkspace(workspace)).catch(() => [] as RetellAgent[]),
     ]);
 
     const agentNames = new Map<string, string>(
