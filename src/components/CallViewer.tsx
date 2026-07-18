@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { X, Download, Loader2, Copy, Check, Pencil } from "lucide-react";
 import { useToast } from "./Toast";
 import { patchCallGrade, gradeCall } from "@/lib/callLog";
+import type { CallRowGrade } from "@/lib/callGrade";
 import CallDetailBody, {
   CALL_DETAIL_TABS,
   type CallDetailTab,
@@ -17,7 +18,7 @@ interface Props {
   /** Called after grade/note are saved, so parent lists can stay in sync. */
   onUpdated?: (callId: string, grade: number | null, note: string | null) => void;
   /** Called after a manual AI grade completes, so parent lists can stay in sync. */
-  onAiGraded?: (callId: string, aiGrade: { score: number; note: string }) => void;
+  onAiGraded?: (callId: string, grade: CallRowGrade) => void;
 }
 
 export default function CallViewer({
@@ -90,9 +91,10 @@ export default function CallViewer({
   async function handleGradeCall() {
     setGrading(true);
     try {
-      const aiGrade = await gradeCall(callId);
-      setData((prev) => (prev ? { ...prev, ai_grade: aiGrade } : prev));
-      onAiGraded?.(callId, aiGrade);
+      const rowGrade = await gradeCall(callId);
+      // Surface the full 0-100 breakdown in the AI Grade tab immediately.
+      setData((prev) => (prev ? { ...prev, call_grades: rowGrade.call_grades } : prev));
+      onAiGraded?.(callId, rowGrade);
       toast("Call graded", "success");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to grade call";

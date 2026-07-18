@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createWebCall } from "@/lib/retell";
 import { getAgentSetting } from "@/lib/db";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 
 export async function POST(request: Request) {
   try {
@@ -14,10 +15,12 @@ export async function POST(request: Request) {
       );
     }
 
+    const workspace = await getServerWorkspace();
+
     // This is the actual enforcement point for the admin "disable agent"
     // toggle — hiding a disabled agent from the homepage list is only a
     // convenience; a caller could still know its agent_id directly.
-    const setting = await getAgentSetting(agent_id).catch(() => ({
+    const setting = await getAgentSetting(workspace, agent_id).catch(() => ({
       agent_id,
       enabled: true,
       tag: "all",
@@ -41,7 +44,7 @@ export async function POST(request: Request) {
       };
     }
 
-    const result = await createWebCall(payload);
+    const result = await createWebCall(payload, retellKeyForWorkspace(workspace));
 
     return NextResponse.json(result);
   } catch (err: unknown) {

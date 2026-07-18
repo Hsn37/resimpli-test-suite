@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin";
 import { listAgents } from "@/lib/retell";
 import { getAgentSettingsMap, setAgentsEnabled, setAgentsTag } from "@/lib/db";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 import { AGENT_TAGS, ALL_AGENTS_TAG } from "@/lib/presets";
 
 const MAX_BULK_AGENTS = 500;
@@ -14,7 +15,11 @@ export async function GET() {
   }
 
   try {
-    const [agents, settings] = await Promise.all([listAgents(), getAgentSettingsMap()]);
+    const workspace = await getServerWorkspace();
+    const [agents, settings] = await Promise.all([
+      listAgents(retellKeyForWorkspace(workspace)),
+      getAgentSettingsMap(workspace),
+    ]);
     const agentList = agents.map((agent: { agent_id: string; agent_name: string }) => {
       const setting = settings.get(agent.agent_id);
       return {
@@ -61,8 +66,9 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Invalid tag" }, { status: 400 });
     }
 
-    if (typeof enabled === "boolean") await setAgentsEnabled(agentIds, enabled);
-    if (typeof tag === "string") await setAgentsTag(agentIds, tag);
+    const workspace = await getServerWorkspace();
+    if (typeof enabled === "boolean") await setAgentsEnabled(workspace, agentIds, enabled);
+    if (typeof tag === "string") await setAgentsTag(workspace, agentIds, tag);
 
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {

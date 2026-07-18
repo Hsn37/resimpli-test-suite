@@ -1,3 +1,7 @@
+// LEGACY: Retell grader — superseded by src/lib/openaiGrader.ts. Kept for
+// reference, intentionally unwired. Only scripts/setup-grader-agent.ts (also
+// legacy) imports this. Do not re-wire without a decision.
+//
 // System prompt for the AI call grader — a dedicated Retell chat agent that
 // scores a call/test transcript for conversational quality (naturalness,
 // pacing, tone), separate from Retell's own task-success metrics.

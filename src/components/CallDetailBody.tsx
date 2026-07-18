@@ -3,6 +3,7 @@
 import { Loader2 } from "lucide-react";
 import TranscriptView from "./TranscriptView";
 import Stars from "./Stars";
+import GradeBreakdown, { type CallGradeBreakdown } from "./GradeBreakdown";
 
 export type CallDetailTab =
   | "transcript"
@@ -69,6 +70,9 @@ export default function CallDetailBody({
     | Record<string, unknown>
     | undefined;
   const aiGrade = data.ai_grade as { score: number; note: string } | null | undefined;
+  // Full 0-100 grade row (from call_grades) — drives the rich breakdown; null
+  // for dev calls that only have a legacy 0-10 ai_grade.
+  const callGrades = data.call_grades as CallGradeBreakdown | null | undefined;
 
   if (tab === "transcript") {
     if (transcriptObj && transcriptObj.length > 0) {
@@ -114,6 +118,10 @@ export default function CallDetailBody({
   }
 
   if (tab === "ai_grade") {
+    // Prefer the rich 0-100 breakdown when a call_grades row exists.
+    if (callGrades) {
+      return <GradeBreakdown grade={callGrades} />;
+    }
     if (!aiGrade) {
       return (
         <div className="space-y-3">
@@ -134,6 +142,7 @@ export default function CallDetailBody({
         </div>
       );
     }
+    // Dev fallback: legacy 0-10 stars + short note.
     return (
       <div className="space-y-3">
         <Stars

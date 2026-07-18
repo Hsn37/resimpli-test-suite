@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { insertCallLog, updateCallGrade } from "@/lib/db";
-import { gradeCallWhenReady } from "@/lib/grader";
+import { gradeCallWhenReady } from "@/lib/grading";
+import { getServerWorkspace } from "@/lib/workspaceServer";
 
 // Background grading polls Retell for up to ~15s for the transcript to be
 // ready, then up to ~15s more for the grading chat, so give the function
@@ -26,8 +27,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "callId is required" }, { status: 400 });
     }
 
+    // Resolve the active workspace up front (reads the request cookie) so the
+    // background after() hook can grade with the correct workspace's Retell key.
+    const workspace = await getServerWorkspace();
+
     await insertCallLog({
       callId,
+      workspace,
       agentId,
       agentName,
       version,
@@ -41,8 +47,9 @@ export async function POST(req: NextRequest) {
     // AI grading runs eagerly in the background: Retell's transcript isn't
     // ready the instant the call ends, so this polls until it is, then
     // grades and caches it — no one needs to open the call for it to happen.
+    // Pass the workspace so it fetches the transcript with the right key (F-1).
     after(() =>
-      gradeCallWhenReady(callId).catch((err) =>
+      gradeCallWhenReady(callId, workspace).catch((err) =>
         console.error(`[grading] background grading failed for call ${callId}:`, err)
       )
     );
@@ -63,7 +70,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "callId is required" }, { status: 400 });
     }
 
-    await updateCallGrade(callId, grade, note);
+    await updateCallGrade(await getServerWorkspace(), callId, grade, note);
 
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {

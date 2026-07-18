@@ -1,61 +1,26 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
-  ArrowDownLeft,
-  ArrowUpRight,
   ChevronLeft,
   ChevronRight,
   Download,
   FileDown,
   Loader2,
-  Pause,
   Phone,
-  Play,
   Search,
-  Share2,
-  Check,
   X,
 } from "lucide-react";
 import { ToastProvider, useToast } from "@/components/Toast";
-import AudioPlayer from "@/components/AudioPlayer";
 import CallViewer from "@/components/CallViewer";
-import Stars from "@/components/Stars";
-import { gradeCall } from "@/lib/callLog";
+import CallsTable, { type CallRowData, sharePath } from "@/components/CallsTable";
+import type { CallRowGrade } from "@/lib/callGrade";
 import {
   downloadCsv,
   downloadJson,
-  downloadRecording,
 } from "@/lib/downloadRecording";
 
-interface RetellCall {
-  call_id: string;
-  agent_id?: string;
-  agent_name?: string | null;
-  call_type?: string;
-  direction?: string;
-  start_timestamp?: number;
-  end_timestamp?: number;
-  recording_url?: string;
-  call_status?: string;
-  from_number?: string;
-  to_number?: string;
-  grade?: number | null;
-  note?: string | null;
-  user_email?: string | null;
-  ai_grade?: { score: number; note: string } | null;
-}
-
 type SortKey = "newest" | "rating-desc" | "rating-asc";
-
-// Shared `/share/<id>` path builder so the row Share button and the CSV export
-// produce identical links. Caller prefixes window.location.origin.
-const SHARE_PATH_PREFIX = "/share";
-function sharePath(callId: string): string {
-  return `${SHARE_PATH_PREFIX}/${callId}`;
-}
 
 // CSV export config. Columns mirror the on-screen row plus the shareable link.
 const EXPORT_FILENAME_PREFIX = "calls_export";
@@ -84,7 +49,7 @@ const EXPORT_FETCH_CONCURRENCY = 6;
 
 // Default export excludes calls that are ungraded OR have no recording. The
 // "Include empty / ungraded calls" checkbox overrides this.
-function isExportableByDefault(call: RetellCall): boolean {
+function isExportableByDefault(call: CallRowData): boolean {
   return call.grade != null && !!call.recording_url;
 }
 
@@ -145,7 +110,7 @@ async function fetchExportDetail(callId: string): Promise<ExportDetail> {
 
 // One CSV data row in CSV_COLUMNS order. Escaping is handled by downloadCsv.
 function callToCsvRow(
-  call: RetellCall,
+  call: CallRowData,
   detail: ExportDetail
 ): (string | number)[] {
   const duration =
@@ -172,289 +137,16 @@ function callToCsvRow(
   ];
 }
 
-// Number of <td> columns in a CallRow (used by the expanded audio row's colSpan).
-const TABLE_COLSPAN = 10;
-
-const STATUS_STYLES: Record<string, string> = {
-  ended: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-  ongoing: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
-  error: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
-  registered: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
-};
-
-/**
- * Truncates `text` to one line in a fixed-width table cell; click to expand
- * to full, wrapped text (growing the row on the y axis) instead of the
- * column stretching or the table scrolling on the x axis.
- */
-function ExpandableText({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const [truncated, setTruncated] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-
-  // A ResizeObserver measures after layout (a plain effect can run too
-  // early) and again whenever the column width changes.
-  useEffect(() => {
-    if (expanded) return;
-    const el = ref.current;
-    if (!el) return;
-    const check = () => setTruncated(el.scrollWidth > el.clientWidth + 1);
-    const ro = new ResizeObserver(check);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [text, expanded]);
-
-  if (expanded) {
-    return (
-      <div>
-        <span className="block whitespace-pre-wrap break-words">{text}</span>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded(false);
-          }}
-          className="mt-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
-        >
-          Show less
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      onClick={(e) => {
-        if (!truncated) return;
-        e.stopPropagation();
-        setExpanded(true);
-      }}
-      className={`group relative min-w-0 ${truncated ? "cursor-pointer" : ""}`}
-    >
-      <span
-        ref={ref}
-        className={`block truncate ${truncated ? "group-hover:invisible" : ""}`}
-      >
-        {text}
-      </span>
-      {truncated && (
-        <span className="absolute inset-0 hidden items-center text-xs font-medium text-blue-600 dark:text-blue-400 group-hover:flex">
-          View full
-        </span>
-      )}
-    </div>
-  );
-}
-
-function CallRow({
-  call,
-  isPlaying,
-  onTogglePlay,
-  onViewDetails,
-  onAiGraded,
-}: {
-  call: RetellCall;
-  isPlaying: boolean;
-  onTogglePlay: () => void;
-  onViewDetails: () => void;
-  onAiGraded: (callId: string, aiGrade: { score: number; note: string }) => void;
-}) {
-  const [shared, setShared] = useState(false);
-  const [grading, setGrading] = useState(false);
-  const { toast } = useToast();
-
-  async function handleGradeCall(e: MouseEvent) {
-    e.stopPropagation();
-    setGrading(true);
-    try {
-      const aiGrade = await gradeCall(call.call_id);
-      onAiGraded(call.call_id, aiGrade);
-      toast("Call graded", "success");
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to grade call";
-      toast(message, "error");
-    } finally {
-      setGrading(false);
-    }
-  }
-
-  const duration =
-    call.start_timestamp && call.end_timestamp
-      ? Math.round((call.end_timestamp - call.start_timestamp) / 1000)
-      : null;
-
-  function handlePlay() {
-    if (!call.recording_url) {
-      toast("No recording available for this call", "info");
-      return;
-    }
-    onTogglePlay();
-  }
-
-  function handleShare() {
-    const url = `${window.location.origin}${sharePath(call.call_id)}`;
-    navigator.clipboard.writeText(url);
-    setShared(true);
-    toast("Share link copied to clipboard", "success");
-    setTimeout(() => setShared(false), 2000);
-  }
-
-  function handleDownload() {
-    if (!call.recording_url) {
-      toast("No recording available for this call", "info");
-      return;
-    }
-    downloadRecording(call.recording_url, call.call_id);
-  }
-
-  const statusClass =
-    STATUS_STYLES[call.call_status ?? ""] ??
-    "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
-
-  const DirectionIcon =
-    call.direction === "outbound" ? ArrowUpRight : ArrowDownLeft;
-
-  return (
-    <>
-      <tr
-        onClick={onViewDetails}
-        className={`border-b border-zinc-100 dark:border-zinc-900 transition-colors cursor-pointer ${
-          isPlaying
-            ? "bg-blue-50/60 dark:bg-blue-950/20"
-            : "hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
-        }`}
-      >
-        <td className="py-3 pl-4 pr-3 w-10">
-          <div className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-500">
-            <DirectionIcon size={15} />
-          </div>
-        </td>
-        <td className="py-3 px-3 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="font-medium truncate">{call.agent_name ?? call.call_type ?? "Call"}</span>
-            {call.call_status && (
-              <span
-                className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0 ${statusClass}`}
-              >
-                {call.call_status}
-              </span>
-            )}
-          </div>
-          <div className="text-xs text-zinc-500 mt-0.5 truncate">{call.call_type ?? "Call"}</div>
-          <div className="text-[11px] text-zinc-400 font-mono truncate mt-0.5">
-            {call.call_id}
-          </div>
-        </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 break-words">
-          {call.start_timestamp
-            ? new Date(call.start_timestamp).toLocaleString()
-            : "Unknown time"}
-        </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 truncate">
-          {duration !== null
-            ? `${Math.floor(duration / 60)}m ${duration % 60}s`
-            : "—"}
-        </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 min-w-0 break-words">
-          {call.user_email ? (
-            call.user_email
-          ) : (
-            // No app user — call originated inside Retell, not from our tool.
-            <span className="text-zinc-400 dark:text-zinc-500">Retell</span>
-          )}
-        </td>
-        <td className="py-3 px-3 whitespace-nowrap">
-          {call.grade ? (
-            <Stars value={call.grade} size={13} emptyClass="text-zinc-200 dark:text-zinc-700" />
-          ) : (
-            <span className="text-zinc-300 dark:text-zinc-600">—</span>
-          )}
-        </td>
-        <td className="py-3 px-3 text-zinc-600 dark:text-zinc-400 min-w-0">
-          {call.note ? (
-            <ExpandableText text={call.note} />
-          ) : (
-            <span className="text-zinc-300 dark:text-zinc-600">—</span>
-          )}
-        </td>
-        <td className="py-3 px-3 whitespace-nowrap">
-          {call.ai_grade ? (
-            <Stars
-              value={call.ai_grade.score}
-              size={13}
-              filledClass="fill-purple-500 text-purple-500"
-              emptyClass="text-zinc-200 dark:text-zinc-700"
-            />
-          ) : grading ? (
-            <Loader2 className="animate-spin text-zinc-400" size={14} />
-          ) : (
-            <button
-              onClick={handleGradeCall}
-              className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
-            >
-              Grade call
-            </button>
-          )}
-        </td>
-        <td className="py-3 px-3 min-w-0 text-zinc-600 dark:text-zinc-400">
-          {call.ai_grade?.note && <ExpandableText text={call.ai_grade.note} />}
-        </td>
-        <td
-          className="py-3 pl-3 pr-4 text-right whitespace-nowrap"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-end gap-1">
-            <button
-              onClick={handlePlay}
-              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
-                isPlaying
-                  ? "bg-blue-600 text-white hover:bg-blue-700"
-                  : "text-zinc-400 hover:text-blue-600 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              }`}
-              title={call.recording_url ? "Play recording" : "No recording available"}
-              disabled={!call.recording_url}
-            >
-              {isPlaying ? <Pause size={15} /> : <Play size={15} />}
-            </button>
-            <button
-              onClick={handleShare}
-              className="w-8 h-8 flex items-center justify-center rounded-full text-zinc-400 hover:text-blue-600 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-              title="Copy share link"
-            >
-              {shared ? <Check size={15} /> : <Share2 size={15} />}
-            </button>
-            <button
-              onClick={handleDownload}
-              className="w-8 h-8 flex items-center justify-center rounded-full text-zinc-400 hover:text-blue-600 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              title={call.recording_url ? "Download recording" : "No recording available"}
-              disabled={!call.recording_url}
-            >
-              <Download size={15} />
-            </button>
-          </div>
-        </td>
-      </tr>
-      {isPlaying && call.recording_url && (
-        <tr
-          className="bg-blue-50/60 dark:bg-blue-950/20"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <td colSpan={TABLE_COLSPAN} className="px-4 pb-3">
-            <AudioPlayer src={call.recording_url} onEnded={onTogglePlay} />
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
 const PAGE_SIZE = 50;
-// How many recent calls to load up front. The page filters, sorts, and
-// paginates over this whole window client-side (Retell owns the calls; our DB
-// owns user/grade/note, so cross-field filtering can't be a single query).
+// The calls page loads the LAST 1000 calls only, then filters/sorts/paginates
+// over that window client-side. Retell's list-calls is ~5s per 1000-call page,
+// so pulling more means multiple sequential pages that blow past the route's
+// 30s budget (a 5000 fetch 500'd). 1000 = one page, fast. For older/full history
+// use the dashboard (its own date-range query), not this recent-calls view.
 const FETCH_LIMIT = 1000;
 
 function CallsContent() {
-  const [calls, setCalls] = useState<RetellCall[]>([]);
+  const [calls, setCalls] = useState<CallRowData[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -540,13 +232,20 @@ function CallsContent() {
   }
 
   // Reflect a manual "Grade call" result (from the row button or the viewer)
-  // without a refetch.
-  function handleAiGraded(
-    callId: string,
-    aiGrade: { score: number; note: string }
-  ) {
+  // without a refetch — merges the full 0-100 grade fields into the row.
+  function handleAiGraded(callId: string, grade: CallRowGrade) {
     setCalls((prev) =>
-      prev.map((c) => (c.call_id === callId ? { ...c, ai_grade: aiGrade } : c))
+      prev.map((c) =>
+        c.call_id === callId
+          ? {
+              ...c,
+              rep_score: grade.rep_score,
+              grade100: grade.grade100,
+              ai_callout: grade.ai_callout,
+              ai_note: grade.ai_note,
+            }
+          : c
+      )
     );
   }
 
@@ -562,7 +261,7 @@ function CallsContent() {
       })
       .then((data) => {
         if (cancelled) return;
-        const list: RetellCall[] = Array.isArray(data) ? data : data.calls ?? [];
+        const list: CallRowData[] = Array.isArray(data) ? data : data.calls ?? [];
         setCalls(list);
       })
       .catch((err) => {
@@ -623,14 +322,8 @@ function CallsContent() {
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <div className="max-w-7xl mx-auto p-8">
+    <div className="w-full p-6 lg:p-8">
       <div className="flex items-center gap-3 mb-6">
-        <Link
-          href="/"
-          className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
-        >
-          <ArrowLeft size={18} />
-        </Link>
         <h1 className="font-semibold text-lg flex items-center gap-2">
           <Phone size={18} />
           Calls
@@ -784,52 +477,15 @@ function CallsContent() {
           {calls.length === 0 ? "No calls yet." : "No calls match your filters."}
         </div>
       ) : (
-        <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-          <table className="w-full text-sm border-collapse table-fixed">
-            <colgroup>
-              <col className="w-10" />
-              <col className="w-48" />
-              <col className="w-32" />
-              <col className="w-20" />
-              <col className="w-28" />
-              <col className="w-16" />
-              <col className="w-40" />
-              <col className="w-16" />
-              <col className="w-40" />
-              <col className="w-32" />
-            </colgroup>
-            <thead>
-              <tr className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 text-center text-xs uppercase tracking-wide text-zinc-500">
-                <th className="py-2.5 pl-4 pr-3 font-medium"></th>
-                <th className="py-2.5 px-3 font-medium">Call</th>
-                <th className="py-2.5 px-3 font-medium">Time</th>
-                <th className="py-2.5 px-3 font-medium">Duration</th>
-                <th className="py-2.5 px-3 font-medium">User</th>
-                <th className="py-2.5 px-3 font-medium">Rating</th>
-                <th className="py-2.5 px-3 font-medium">Note</th>
-                <th className="py-2.5 px-3 font-medium">AI Grade</th>
-                <th className="py-2.5 px-3 font-medium">AI Note</th>
-                <th className="py-2.5 pl-3 pr-4 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paged.map((call) => (
-                <CallRow
-                  key={call.call_id}
-                  call={call}
-                  isPlaying={playingCallId === call.call_id}
-                  onTogglePlay={() =>
-                    setPlayingCallId((prev) =>
-                      prev === call.call_id ? null : call.call_id
-                    )
-                  }
-                  onViewDetails={() => setViewingCallId(call.call_id)}
-                  onAiGraded={handleAiGraded}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <CallsTable
+          calls={paged}
+          playingCallId={playingCallId}
+          onTogglePlay={(id) =>
+            setPlayingCallId((prev) => (prev === id ? null : id))
+          }
+          onViewDetails={(id) => setViewingCallId(id)}
+          onAiGraded={handleAiGraded}
+        />
       )}
 
       {!loading && filtered.length > PAGE_SIZE && (

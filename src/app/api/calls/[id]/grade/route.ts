@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
-import { getCall } from "@/lib/retell";
-import { ensureCallGraded } from "@/lib/grader";
+import { listFailureClasses } from "@/lib/db";
+import { gradeRetellCall } from "@/lib/grading";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
+import { toCallRowGrade } from "@/lib/callGrade";
 
-// Manual "Grade call" trigger. Grading itself polls for up to ~15s, so give
-// this route enough headroom to finish before the platform kills it.
-export const maxDuration = 20;
+// Manual "Grade call" trigger. Runs the unified 0-100 grader (upsert into
+// `calls` → OpenAI grade → `call_grades`), so a call graded here shows the same
+// rep_score + grade breakdown as ingested/dashboard calls. Grading polls OpenAI,
+// so give the route headroom before the platform kills it.
+export const maxDuration = 30;
 
 export async function POST(
   _request: Request,
@@ -12,21 +16,25 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const call = await getCall(id);
-    const aiGrade = await ensureCallGraded(
-      id,
-      call.transcript_object,
-      call.retell_llm_dynamic_variables
-    );
+    const workspace = await getServerWorkspace();
+    const apiKey = retellKeyForWorkspace(workspace);
 
-    if (!aiGrade) {
+    const grade = await gradeRetellCall(workspace, id, apiKey);
+    if (!grade) {
       return NextResponse.json(
         { error: "Grading failed — no transcript available yet, or the grader timed out." },
         { status: 422 }
       );
     }
+    if (grade.error) {
+      return NextResponse.json({ error: `Grader error: ${grade.error}` }, { status: 502 });
+    }
 
-    return NextResponse.json({ ai_grade: aiGrade });
+    // Return the compact row fields (chips + note) the calls table merges in,
+    // plus the full grade row for the modal breakdown.
+    const failureClasses = await listFailureClasses(workspace).catch(() => []);
+    const classNames = new Map(failureClasses.map((c) => [c.key, c.name]));
+    return NextResponse.json(toCallRowGrade(grade, classNames));
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to grade call";
     return NextResponse.json({ error: message }, { status: 500 });

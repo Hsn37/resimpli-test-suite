@@ -1,3 +1,5 @@
+import type { CallRowGrade } from "./callGrade";
+
 // Client-side helpers for persisting call data to the database.
 // Both calls are fire-and-forget — a logging failure must never block the UI.
 
@@ -44,17 +46,16 @@ export async function patchCallGrade(
 }
 
 /**
- * Manually trigger AI grading for a call. Unlike the helpers above, this
- * throws on failure — callers drive a loading/error UI off it (the "Grade
- * call" button), so it can't be fire-and-forget.
+ * Manually trigger the unified 0-100 AI grader for a call. Unlike the helpers
+ * above, this throws on failure — callers drive a loading/error UI off it (the
+ * "Grade call" button), so it can't be fire-and-forget. Resolves to the row
+ * grade fields (rep_score + grade + AI note + full call_grades for the modal).
  */
-export async function gradeCall(
-  callId: string
-): Promise<{ score: number; note: string }> {
+export async function gradeCall(callId: string): Promise<CallRowGrade> {
   const res = await fetch(`/api/calls/${callId}/grade`, { method: "POST" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.error || "Failed to grade call");
   }
-  return data.ai_grade;
+  return data as CallRowGrade;
 }

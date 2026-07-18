@@ -1,9 +1,8 @@
 "use client";
 
-export interface TranscriptTurn {
-  role: string;
-  content: string;
-}
+import type { TranscriptTurn } from "@/lib/transcript";
+
+export type { TranscriptTurn };
 
 /**
  * Renders a list of {role, content} turns as chat bubbles. Shared by

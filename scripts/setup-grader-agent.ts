@@ -1,3 +1,7 @@
+// LEGACY: Retell grader — superseded by src/lib/openaiGrader.ts. Kept for
+// reference, intentionally unwired. The grader is now OpenAI-based and needs no
+// Retell chat agent. Do not re-wire without a decision.
+//
 // One-time setup: creates the retell-llm + chat agent that acts as the AI
 // call grader, configured with post_chat_analysis_data so we get back a
 // structured {grade, note} after each graded chat.
