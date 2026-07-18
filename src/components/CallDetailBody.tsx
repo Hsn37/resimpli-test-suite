@@ -22,6 +22,33 @@ export const CALL_DETAIL_TABS: { key: CallDetailTab; label: string }[] = [
   { key: "raw", label: "Raw JSON" },
 ];
 
+/**
+ * The grade trigger button. Renders nothing when `onGrade` is omitted (e.g. the
+ * public share page). `label` lets callers say "Grade call" for a first grade or
+ * "Rerun grader" to re-grade an already-graded call.
+ */
+function GradeButton({
+  onGrade,
+  grading,
+  label,
+}: {
+  onGrade?: () => void;
+  grading?: boolean;
+  label: string;
+}) {
+  if (!onGrade) return null;
+  return (
+    <button
+      onClick={onGrade}
+      disabled={grading}
+      className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+    >
+      {grading && <Loader2 className="animate-spin" size={14} />}
+      {grading ? "Grading…" : label}
+    </button>
+  );
+}
+
 export function KeyValueList({ entries }: { entries: [string, unknown][] }) {
   return (
     <div className="space-y-2">
@@ -118,9 +145,15 @@ export default function CallDetailBody({
   }
 
   if (tab === "ai_grade") {
-    // Prefer the rich 0-100 breakdown when a call_grades row exists.
+    // Prefer the rich 0-100 breakdown when a call_grades row exists. Offer a
+    // rerun so an already-graded call can be re-scored from the modal.
     if (callGrades) {
-      return <GradeBreakdown grade={callGrades} />;
+      return (
+        <div className="space-y-4">
+          <GradeBreakdown grade={callGrades} />
+          <GradeButton onGrade={onGrade} grading={grading} label="Rerun grader" />
+        </div>
+      );
     }
     if (!aiGrade) {
       return (
@@ -129,20 +162,12 @@ export default function CallDetailBody({
             No AI grade yet — it&apos;s generated the first time this call is opened
             and can take a few seconds.
           </p>
-          {onGrade && (
-            <button
-              onClick={onGrade}
-              disabled={grading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-            >
-              {grading && <Loader2 className="animate-spin" size={14} />}
-              {grading ? "Grading…" : "Grade call"}
-            </button>
-          )}
+          <GradeButton onGrade={onGrade} grading={grading} label="Grade call" />
         </div>
       );
     }
-    // Dev fallback: legacy 0-10 stars + short note.
+    // Dev fallback: legacy 0-10 stars + short note; rerun upgrades it to the
+    // full 0-100 breakdown.
     return (
       <div className="space-y-3">
         <Stars
@@ -151,6 +176,7 @@ export default function CallDetailBody({
           filledClass="fill-purple-500 text-purple-500"
         />
         <p className="text-sm text-zinc-700 dark:text-zinc-300">{aiGrade.note}</p>
+        <GradeButton onGrade={onGrade} grading={grading} label="Rerun grader" />
       </div>
     );
   }
