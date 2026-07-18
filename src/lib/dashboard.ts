@@ -170,7 +170,7 @@ export interface DashCallGrade {
   grade: number | null;
   applicable_count: number;
   passed_count: number;
-  results: Record<string, { applicable: boolean; passed: boolean; evidence: string }>;
+  results: Record<string, { applicable: boolean; violated?: boolean; passed?: boolean; evidence: string }>;
   ai_callout: boolean;
   rep_score: number | null;
   rep_scorecard: Record<string, { applicable: boolean; score: number | null; evidence: string }>;

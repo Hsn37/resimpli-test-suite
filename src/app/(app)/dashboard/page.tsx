@@ -8,7 +8,7 @@ import TrendsChart from "./TrendsChart";
 import CallsTable, { type CallRowData } from "@/components/CallsTable";
 import CallViewer from "@/components/CallViewer";
 import IngestionTriggers from "@/components/IngestionTriggers";
-import { humanAiNote, type CallRowGrade } from "@/lib/callGrade";
+import { humanAiNote, isViolated, type CallRowGrade } from "@/lib/callGrade";
 import { downloadJson } from "@/lib/downloadRecording";
 import {
   computeStats,
@@ -289,8 +289,7 @@ function DashboardContent() {
         if (gradeBandFilter !== band) return false;
       }
       if (failedClass !== "all") {
-        const res = c.call_grades?.results?.[failedClass];
-        if (!res || !res.applicable || res.passed) return false;
+        if (!isViolated(c.call_grades?.results?.[failedClass])) return false;
       }
       if (aiCalloutFilter === "yes" && !c.call_grades?.ai_callout) return false;
       if (aiCalloutFilter === "no" && c.call_grades?.ai_callout) return false;
@@ -352,12 +351,10 @@ function DashboardContent() {
         let applicable = 0,
           failed = 0;
         for (const c of filtered) {
-          const r = c.call_grades?.results?.[cls.key] as
-            | { applicable: boolean; passed: boolean }
-            | undefined;
+          const r = c.call_grades?.results?.[cls.key];
           if (r?.applicable) {
             applicable += 1;
-            if (!r.passed) failed += 1;
+            if (isViolated(r)) failed += 1;
           }
         }
         return { ...cls, applicable, failed, failRate: applicable ? failed / applicable : 0 };

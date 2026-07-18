@@ -18,6 +18,29 @@ export interface GradeLike {
 // Default AI-note copy when a caller-suspected-AI callout carries no quote.
 export const DEFAULT_CALLOUT_NOTE = "Caller suspected AI";
 
+// A single failure-class result as stored in `results`. `violated` = the failure
+// occurred (only meaningful when applicable). `passed` is the LEGACY field —
+// pre-divergence rows stored `passed` (= !violated); isViolated tolerates both.
+export interface FailureResultLike {
+  applicable?: boolean;
+  violated?: boolean;
+  passed?: boolean;
+  evidence?: string;
+}
+
+/**
+ * Did this failure class get triggered? True only when the situation was
+ * applicable AND the failure occurred. Reads the current `violated` field and
+ * falls back to inverting the legacy `passed` field so older/imported
+ * call_grades rows still render correctly.
+ */
+export function isViolated(result: FailureResultLike | null | undefined): boolean {
+  if (!result || !result.applicable) return false;
+  if (typeof result.violated === "boolean") return result.violated;
+  if (typeof result.passed === "boolean") return !result.passed;
+  return false;
+}
+
 /**
  * Human-readable one-line AI note from a full call_grades row:
  *   1. AI callout → its quote (or a short default),
@@ -32,10 +55,9 @@ export function humanAiNote(
   if (grade.ai_callout) {
     return grade.ai_callout_quote?.trim() || DEFAULT_CALLOUT_NOTE;
   }
-  const failed = Object.entries(grade.results ?? {}).find(([, r]) => {
-    const rr = r as { applicable?: boolean; passed?: boolean };
-    return rr?.applicable && !rr?.passed;
-  });
+  const failed = Object.entries(grade.results ?? {}).find(([, r]) =>
+    isViolated(r as FailureResultLike)
+  );
   if (failed) {
     const [key] = failed;
     return `Top issue: ${classNames.get(key) ?? key}`;

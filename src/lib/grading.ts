@@ -101,7 +101,7 @@ function noteFromResult(result: OpenAiGradeResult): string {
     return `AI callout${result.ai_callout_quote ? `: ${result.ai_callout_quote}` : ""}`;
   }
   const failed = Object.entries(result.results).find(
-    ([, r]) => r.applicable && !r.passed
+    ([, r]) => r.applicable && r.violated
   );
   if (failed) {
     const [key, r] = failed;

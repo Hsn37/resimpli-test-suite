@@ -10,6 +10,7 @@ import {
   CALLOUT_TEXT,
   CALLOUT_CARD,
 } from "@/lib/dashboard";
+import { isViolated, type FailureResultLike } from "@/lib/callGrade";
 
 // The 0-100 call_grades row, in the shape both the /calls modal and the
 // /dashboard/calls/[id] page consume. Kept structurally compatible with
@@ -18,7 +19,7 @@ export interface CallGradeBreakdown {
   grade: number | null;
   applicable_count: number;
   passed_count: number;
-  results: Record<string, { applicable: boolean; passed: boolean; evidence: string }>;
+  results: Record<string, FailureResultLike>;
   ai_callout: boolean;
   ai_callout_quote?: string | null;
   rep_score: number | null;
@@ -135,7 +136,7 @@ export default function GradeBreakdown({ grade }: { grade: CallGradeBreakdown })
         <div className="text-sm font-semibold mb-2">
           Grading results{" "}
           <span className="text-xs font-normal text-zinc-500 ml-1">
-            {grade.passed_count}/{grade.applicable_count} applicable passed
+            {grade.passed_count}/{grade.applicable_count} applicable clean
           </span>
         </div>
         <div className="space-y-2">
@@ -156,7 +157,7 @@ function ClassResultRow({
   result,
 }: {
   name: string;
-  result?: { applicable: boolean; passed: boolean; evidence: string };
+  result?: FailureResultLike;
 }) {
   let icon: React.ReactNode;
   let statusText: string;
@@ -165,14 +166,14 @@ function ClassResultRow({
     icon = <MinusCircle size={16} className="text-zinc-400" />;
     statusText = "n/a";
     statusClass = "text-zinc-500";
-  } else if (result.passed) {
-    icon = <CheckCircle2 size={16} className="text-green-600 dark:text-green-400" />;
-    statusText = "passed";
-    statusClass = GOOD_TEXT;
-  } else {
+  } else if (isViolated(result)) {
     icon = <XCircle size={16} className="text-red-600 dark:text-red-400" />;
-    statusText = "failed";
+    statusText = "violated";
     statusClass = BAD_TEXT;
+  } else {
+    icon = <CheckCircle2 size={16} className="text-green-600 dark:text-green-400" />;
+    statusText = "clean";
+    statusClass = GOOD_TEXT;
   }
   return (
     <div className="rounded-md border border-zinc-200 dark:border-zinc-800 p-2.5">

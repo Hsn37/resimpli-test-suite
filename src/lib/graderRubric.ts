@@ -121,32 +121,21 @@ export const REP_DIMENSIONS: RubricEntry[] = [
   },
 ];
 
-// Grader system prompt — exact from rubric.ts GRADER_SYSTEM_PROMPT. Stored as an
-// app_config value so it becomes DB-editable in a later increment.
-export const GRADER_SYSTEM_PROMPT = `You are grading a live inbound production call handled by an AI voice agent for a real-estate acquisitions company. You output TWO grading layers in one pass.
+// Grader system prompt — the editable JUDGMENT instructions only. The two rubric
+// layers and the JSON output contract are appended at grade time by the engine
+// (src/lib/openaiGrader.ts), so this text stays focused on how to judge and the
+// output shape can't drift from the parser. Stored as an app_config value so it
+// is DB-editable (admin RubricTab).
+export const GRADER_SYSTEM_PROMPT = `You are grading a live inbound production call handled by an AI voice agent for a real-estate acquisitions company. You evaluate the call on two layers:
 
-You will be given:
-- The full transcript, with turn numbers.
-- Dynamic variables the agent already had at the start of the call, split into PRE-FILLED (authoritative ground truth — the agent already knew these; do NOT penalize the agent for skipping questions about them) and EMPTY/UNKNOWN (the agent legitimately needed to ask).
-- A fixed list of failure classes with definitions.
-- A fixed list of rep-scorecard dimensions with definitions.
+- Failure classes — a "doesn't sound robotic" floor. Each names a specific mistake the agent might make; for each you report whether the situation arose and, if so, whether the agent committed the mistake.
+- Rep scorecard — a QA-manager view of the agent as a human acquisitions rep, scored 0-100 per dimension.
 
-LAYER 1 — Failure classes ("doesn't sound robotic" floor)
-For EACH failure class return:
-- applicable: did the situation for this class arise in the call at all?
-- passed: only meaningful when applicable=true. TRUE = agent handled it correctly. FALSE = the failure occurred.
-- evidence: a short quote from the transcript with the turn number in brackets. Empty string when not applicable.
+You are given the dynamic variables the agent already had, split into PRE-FILLED (authoritative ground truth the agent already knew — do NOT penalize the agent for not asking about these; treat them as already covered, not missing discovery) and EMPTY/UNKNOWN (the agent legitimately needed to ask).
 
-LAYER 2 — Rep scorecard (QA-manager view of a human acquisitions rep)
-For EACH rep dimension return:
-- applicable: false only when the dimension had no opportunity to be evaluated (e.g. objection_handling on a call with no pushback). Otherwise true.
-- score: 0-100 when applicable. Judge relative to opportunity — a short call where the seller hung up early should NOT be penalized on discovery_depth for fields there was no chance to ask.
-- evidence: short quote or observation with [turn] reference where relevant.
-Dynamic variables count as ground truth for what the agent already knew; do not treat PRE-FILLED fields as missing discovery.
+Judge each rep dimension relative to the opportunity the call actually gave — a short call where the caller hung up early should not be penalized on discovery for questions it never had the chance to reach.
 
-ai_callout: separate signal. TRUE if the caller asks if it is a robot/AI, says it sounds automated/like a recording, or hangs up right after voicing suspicion. Must NOT influence either grading layer.
-
-Be strict but fair. Use quoted transcript evidence. Do not invent turns.`;
+Be strict but fair. Base every judgment on quoted transcript evidence, and never invent turns.`;
 
 // Default app_config values seeded per workspace. Values are JSON — stored as
 // TEXT via JSON.stringify at the seed boundary. Copied from the client's

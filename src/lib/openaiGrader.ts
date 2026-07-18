@@ -1,30 +1,38 @@
 import "server-only";
+import OpenAI from "openai";
 
-// OpenAI 2-layer call grader engine — a faithful port of the client's Supabase
-// edge function (`grade-call/index.ts`), minus the Deno/Supabase bits. This is a
-// PURE compute + single OpenAI call: no DB reads or writes live here — callers
-// (src/lib/grading.ts) fetch the inputs (rubric/model from the DB, transcript
-// from Retell) and persist the result.
+// OpenAI 2-layer call grader engine. A PURE compute + single OpenAI call: no DB
+// reads or writes live here — callers (src/lib/grading.ts) fetch the inputs
+// (rubric/model from the DB, transcript from Retell) and persist the result.
 //
-// Layer 1 = failure classes ("doesn't sound robotic" floor) → grade (0-100).
+// The model returns plain JSON (response_format: json_object) — no function/tool
+// call. The output contract is described in the composed system prompt, so the
+// whole grader spec reads top-to-bottom as instructions rather than a separate
+// tool schema.
+//
+// Layer 1 = failure classes ("doesn't sound robotic" floor) → grade (0-100),
+//   the share of applicable failure situations the agent got through WITHOUT
+//   committing the failure (violated=false).
 // Layer 2 = rep scorecard (QA-manager view) → rep_score (0-100).
 // ai_callout is a separate signal that must not influence either layer.
 
 // --- OpenAI call constants (no magic strings, per CLAUDE.md) ------------------
-const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
-const SUBMIT_GRADE_TOOL_NAME = "submit_grade";
 const GRADER_TEMPERATURE = 0.2;
-// Hard cap on the OpenAI request so a hung fetch can't stall the background
-// after() hook past its platform budget (Lovable had no timeout — a bug).
+// Plain JSON output — the schema lives in the system prompt, not a tool schema.
+const RESPONSE_FORMAT_JSON = { type: "json_object" } as const;
+// Hard cap on the OpenAI request so a hung call can't stall the background
+// after() hook past its platform budget. Paired with maxRetries: 0 so total
+// wall time is bounded by this single attempt.
 const OPENAI_FETCH_TIMEOUT_MS = 30000;
+const OPENAI_MAX_RETRIES = 0;
 // Values that count as "empty" for a prefilled variable (case-insensitive,
 // trimmed) — ported verbatim from the client's splitVariables.
 const EMPTY_VARIABLE_TOKENS = ["unknown", "n/a", "none", "null"];
-// Cap the evidence/quote strings the model returns before we persist them. The
-// Lovable app stored these unbounded (a hardening gap — Phase 8); a runaway
-// generation could otherwise bloat call_grades. 600 chars comfortably holds a
+// Cap the evidence/quote strings the model returns before we persist them, so a
+// runaway generation can't bloat call_grades. 600 chars comfortably holds a
 // short quote + [turn] reference.
 const MAX_EVIDENCE_LENGTH = 600;
+const GRADE_SCALE_MAX = 100;
 
 /** A rubric entry (failure class or rep dimension) as passed to the engine. */
 export interface GraderRubricEntry {
@@ -35,7 +43,7 @@ export interface GraderRubricEntry {
 
 export interface FailureClassResult {
   applicable: boolean;
-  passed: boolean;
+  violated: boolean; // true = the failure occurred (bad); only meaningful when applicable
   evidence: string;
 }
 
@@ -45,11 +53,11 @@ export interface RepScorecardResult {
   evidence: string;
 }
 
-/** The typed 2-layer grade the engine returns. Mirrors the client's call_grades row. */
+/** The typed 2-layer grade the engine returns. Mirrors the stored call_grades row. */
 export interface OpenAiGradeResult {
   grade: number | null; // 0-100, or null when no failure class applied
   applicable_count: number;
-  passed_count: number;
+  passed_count: number; // applicable classes NOT violated (drives grade; higher = better)
   results: Record<string, FailureClassResult>;
   ai_callout: boolean;
   ai_callout_quote: string | null;
@@ -64,7 +72,7 @@ export interface GradeCallInput {
   dynamicVariables: Record<string, unknown> | null | undefined;
   failureClasses: GraderRubricEntry[];
   repDimensions: GraderRubricEntry[];
-  systemPrompt: string;
+  systemPrompt: string; // the editable judgment instructions (from app_config)
   model: string;
   apiKey: string | undefined;
 }
@@ -121,107 +129,59 @@ export function formatTranscript(turns: unknown): string {
     .join("\n");
 }
 
-/** Build the forced `submit_grade` tool schema from the DB rubric keys. */
-function buildSubmitGradeTool(
-  failureClasses: GraderRubricEntry[],
-  repDimensions: GraderRubricEntry[]
-) {
-  return {
-    type: "function",
-    function: {
-      name: SUBMIT_GRADE_TOOL_NAME,
-      description:
-        "Return failure-class results, ai_callout signal, and rep scorecard in a single call.",
-      parameters: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          results: {
-            type: "array",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                key: { type: "string", enum: failureClasses.map((c) => c.key) },
-                applicable: {
-                  type: "boolean",
-                  description:
-                    "Did the situation described by this failure class arise in the call?",
-                },
-                passed: {
-                  type: "boolean",
-                  description:
-                    "Only meaningful when applicable=true. false = the failure occurred.",
-                },
-                evidence: {
-                  type: "string",
-                  description:
-                    "Short quote from the transcript with a [turn] reference. Empty string if not applicable.",
-                },
-              },
-              required: ["key", "applicable", "passed", "evidence"],
-            },
-          },
-          ai_callout: {
-            type: "boolean",
-            description:
-              "True if the caller indicated they suspect they are talking to an AI/robot/recording (or hung up right after voicing that suspicion).",
-          },
-          ai_callout_quote: {
-            type: "string",
-            description:
-              "Short quoted moment from the caller with [turn] reference. Empty string if ai_callout is false.",
-          },
-          rep_scorecard: {
-            type: "array",
-            description:
-              "One entry per rep-scorecard dimension. Score 0-100 when applicable=true; when applicable=false the score is ignored.",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                key: { type: "string", enum: repDimensions.map((d) => d.key) },
-                applicable: {
-                  type: "boolean",
-                  description:
-                    "False only for dimensions with no evidence to score (e.g. objection_handling when no objection arose).",
-                },
-                score: {
-                  type: "integer",
-                  minimum: 0,
-                  maximum: 100,
-                  description:
-                    "0-100. Judge relative to opportunity; do not penalize for questions the call had no chance to reach.",
-                },
-                evidence: {
-                  type: "string",
-                  description:
-                    "Short quote or observation with [turn] reference where relevant. Empty string if not applicable.",
-                },
-              },
-              required: ["key", "applicable", "score", "evidence"],
-            },
-          },
-        },
-        required: ["results", "ai_callout", "ai_callout_quote", "rep_scorecard"],
-      },
-    },
-  };
+/** Render a rubric layer as a `- key (name): definition` list for the prompt. */
+function renderRubric(entries: GraderRubricEntry[]): string {
+  return entries.map((e) => `- ${e.key} (${e.name}): ${e.definition}`).join("\n");
 }
 
-/** Build the user prompt from the split variables, rubric, and transcript. */
+// The output contract — code-owned so it always matches the parser below and is
+// safe against a stale/edited stored system prompt. This is where the JSON shape
+// is defined; tweak the outputs here.
+const OUTPUT_CONTRACT = `Respond with ONLY a JSON object (no markdown, no commentary) of exactly this shape:
+{
+  "failures": [
+    { "key": <a failure-class key from the list above>, "applicable": <boolean>, "violated": <boolean>, "evidence": <short transcript quote with a [turn] reference, or ""> }
+  ],
+  "ai_callout": <boolean>,
+  "ai_callout_quote": <short caller quote with a [turn] reference, or "">,
+  "scorecard": [
+    { "key": <a rep-dimension key from the list above>, "applicable": <boolean>, "score": <integer 0-100, or null>, "evidence": <short quote/observation with a [turn] reference, or ""> }
+  ]
+}
+
+Rules:
+- "failures": exactly one entry per failure class listed above. "applicable" = did the situation this class describes arise in the call. "violated" = true ONLY when the failure actually occurred; it is meaningful only when "applicable" is true (use false when not applicable).
+- "scorecard": exactly one entry per rep dimension listed above. "applicable" = false only when the call gave no opportunity to evaluate that dimension. "score" = 0-100 judged relative to opportunity when applicable; use null when not applicable.
+- "ai_callout" = true only if the caller indicates they suspect an AI/robot/recording (or hangs up right after voicing that suspicion). It MUST NOT influence any "violated" or "score" value.
+- Quote real transcript evidence with [turn] references. Never invent turns.`;
+
+/**
+ * Compose the full system prompt: editable judgment instructions + the two
+ * rubric layers + the output contract. The user prompt carries only the
+ * per-call dynamic context.
+ */
+function buildSystemPrompt(
+  basePrompt: string,
+  failureClasses: GraderRubricEntry[],
+  repDimensions: GraderRubricEntry[]
+): string {
+  return [
+    basePrompt.trim(),
+    `Failure classes:\n${renderRubric(failureClasses)}`,
+    `Rep scorecard dimensions:\n${renderRubric(repDimensions)}`,
+    OUTPUT_CONTRACT,
+  ].join("\n\n");
+}
+
+/** Build the user prompt from the split variables and transcript (dynamic context only). */
 function buildUserPrompt(
   prefilled: Record<string, unknown>,
   empty: string[],
-  classDefinitions: GraderRubricEntry[],
-  repDefinitions: GraderRubricEntry[],
   transcriptText: string
 ): string {
   return [
-    `PRE-FILLED variables (do NOT penalize for skipping):\n${JSON.stringify(prefilled, null, 2)}`,
-    `EMPTY / UNKNOWN variables (agent legitimately needed):\n${JSON.stringify(empty, null, 2)}`,
-    `Failure classes:\n${JSON.stringify(classDefinitions, null, 2)}`,
-    `Rep-scorecard dimensions:\n${JSON.stringify(repDefinitions, null, 2)}`,
+    `PRE-FILLED variables (agent already knew these — do NOT penalize for skipping):\n${JSON.stringify(prefilled, null, 2)}`,
+    `EMPTY / UNKNOWN variables (agent legitimately needed to ask):\n${JSON.stringify(empty, null, 2)}`,
     `Transcript:\n${transcriptText || "(empty)"}`,
   ].join("\n\n");
 }
@@ -232,7 +192,7 @@ function boundedEvidence(value: unknown): string {
   return s.length > MAX_EVIDENCE_LENGTH ? s.slice(0, MAX_EVIDENCE_LENGTH) : s;
 }
 
-/** Safe JSON.parse — returns null instead of throwing on malformed tool args. */
+/** Safe JSON.parse — returns null instead of throwing on malformed output. */
 function safeJsonParse(text: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(text);
@@ -242,60 +202,50 @@ function safeJsonParse(text: string): Record<string, unknown> | null {
   }
 }
 
-interface ToolArgs {
-  results?: Array<{ key?: unknown; applicable?: unknown; passed?: unknown; evidence?: unknown }>;
+interface GradeJson {
+  failures?: Array<{ key?: unknown; applicable?: unknown; violated?: unknown; evidence?: unknown }>;
   ai_callout?: unknown;
   ai_callout_quote?: unknown;
-  rep_scorecard?: Array<{ key?: unknown; applicable?: unknown; score?: unknown; evidence?: unknown }>;
+  scorecard?: Array<{ key?: unknown; applicable?: unknown; score?: unknown; evidence?: unknown }>;
 }
 
-/** POST to OpenAI with a forced submit_grade tool call. Returns parsed tool args or throws. */
+/** Call OpenAI (SDK, json_object mode) for a plain-JSON grade. Returns the parsed object or throws. */
 async function callOpenAi(
   input: GradeCallInput,
-  tool: ReturnType<typeof buildSubmitGradeTool>,
+  systemPrompt: string,
   userPrompt: string
-): Promise<ToolArgs> {
+): Promise<GradeJson> {
   if (!input.apiKey) {
-    // Boss hasn't provided OPENAI_API_KEY yet — surface a clear, catchable error
-    // rather than firing a fetch with a missing bearer token.
+    // Surface a clear, catchable error rather than calling the SDK with no token.
     throw new Error("OPENAI_API_KEY is not set");
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), OPENAI_FETCH_TIMEOUT_MS);
-  try {
-    const resp = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        Authorization: `Bearer ${input.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: input.model,
-        temperature: GRADER_TEMPERATURE,
-        messages: [
-          { role: "system", content: input.systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        tools: [tool],
-        tool_choice: { type: "function", function: { name: SUBMIT_GRADE_TOOL_NAME } },
-      }),
-      signal: controller.signal,
-    });
-    if (!resp.ok) throw new Error(`OpenAI ${resp.status}: ${await resp.text()}`);
-    const json = await resp.json();
-    const toolCall = json.choices?.[0]?.message?.tool_calls?.[0];
-    if (!toolCall) throw new Error("No tool call returned");
-    const args = safeJsonParse(toolCall.function?.arguments ?? "");
-    if (!args) throw new Error("Malformed tool arguments");
-    return args as ToolArgs;
-  } finally {
-    clearTimeout(timer);
-  }
+  const client = new OpenAI({ apiKey: input.apiKey, maxRetries: OPENAI_MAX_RETRIES });
+  const completion = await client.chat.completions.create(
+    {
+      model: input.model,
+      temperature: GRADER_TEMPERATURE,
+      response_format: RESPONSE_FORMAT_JSON,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    },
+    { timeout: OPENAI_FETCH_TIMEOUT_MS }
+  );
+
+  const content = completion.choices[0]?.message?.content;
+  if (typeof content !== "string") throw new Error("No content returned");
+  const parsed = safeJsonParse(content);
+  if (!parsed) throw new Error("Malformed JSON output");
+  return parsed as GradeJson;
 }
 
-/** Reduce Layer-1 tool results into the failure-class map + grade (0-100). */
-function reduceFailureClasses(results: ToolArgs["results"]): {
+/** Reduce Layer-1 output into the failure-class map + grade (0-100). */
+function reduceFailures(
+  failures: GradeJson["failures"],
+  validKeys: Set<string>
+): {
   resultsByKey: Record<string, FailureClassResult>;
   applicable: number;
   passed: number;
@@ -304,33 +254,39 @@ function reduceFailureClasses(results: ToolArgs["results"]): {
   const resultsByKey: Record<string, FailureClassResult> = {};
   let applicable = 0;
   let passed = 0;
-  for (const r of results ?? []) {
-    resultsByKey[String(r.key)] = {
-      applicable: !!r.applicable,
-      passed: !!r.passed,
-      evidence: boundedEvidence(r.evidence),
-    };
-    if (r.applicable) {
+  for (const r of failures ?? []) {
+    const key = String(r.key);
+    if (!validKeys.has(key)) continue; // ignore hallucinated keys
+    const isApplicable = !!r.applicable;
+    const violated = isApplicable && !!r.violated;
+    resultsByKey[key] = { applicable: isApplicable, violated, evidence: boundedEvidence(r.evidence) };
+    if (isApplicable) {
       applicable += 1;
-      if (r.passed) passed += 1;
+      if (!violated) passed += 1;
     }
   }
-  const grade = applicable === 0 ? null : Math.round((passed / applicable) * 10000) / 100;
+  const grade =
+    applicable === 0 ? null : Math.round((passed / applicable) * GRADE_SCALE_MAX * 100) / 100;
   return { resultsByKey, applicable, passed, grade };
 }
 
-/** Reduce Layer-2 tool results into the scorecard map + rep_score (0-100). */
-function reduceRepScorecard(scorecard: ToolArgs["rep_scorecard"]): {
+/** Reduce Layer-2 output into the scorecard map + rep_score (0-100). */
+function reduceScorecard(
+  scorecard: GradeJson["scorecard"],
+  validKeys: Set<string>
+): {
   scorecardByKey: Record<string, RepScorecardResult>;
   repScore: number | null;
 } {
   const scorecardByKey: Record<string, RepScorecardResult> = {};
   const applicableScores: number[] = [];
   for (const d of scorecard ?? []) {
+    const key = String(d.key);
+    if (!validKeys.has(key)) continue; // ignore hallucinated keys
     const app = !!d.applicable;
     const raw = typeof d.score === "number" ? d.score : null;
-    const clamped = raw == null ? null : Math.max(0, Math.min(100, Math.round(raw)));
-    scorecardByKey[String(d.key)] = {
+    const clamped = raw == null ? null : Math.max(0, Math.min(GRADE_SCALE_MAX, Math.round(raw)));
+    scorecardByKey[key] = {
       applicable: app,
       score: app ? clamped : null,
       evidence: boundedEvidence(d.evidence),
@@ -348,31 +304,25 @@ function reduceRepScorecard(scorecard: ToolArgs["rep_scorecard"]): {
 
 /**
  * Run the OpenAI 2-layer grader. Never throws: on any failure (missing key,
- * timeout, non-2xx, malformed args) it returns a zeroed result with `error`
+ * timeout, non-2xx, malformed output) it returns a zeroed result with `error`
  * set, so the background after() hook and request handlers stay alive.
  */
 export async function gradeCallWithOpenAi(input: GradeCallInput): Promise<OpenAiGradeResult> {
   const { prefilled, empty } = splitVariables(input.dynamicVariables);
   const transcriptText = formatTranscript(input.transcript);
-  const tool = buildSubmitGradeTool(input.failureClasses, input.repDimensions);
-  const userPrompt = buildUserPrompt(
-    prefilled,
-    empty,
-    input.failureClasses,
-    input.repDimensions,
-    transcriptText
-  );
+  const systemPrompt = buildSystemPrompt(input.systemPrompt, input.failureClasses, input.repDimensions);
+  const userPrompt = buildUserPrompt(prefilled, empty, transcriptText);
 
-  let toolArgs: ToolArgs | null = null;
+  let gradeJson: GradeJson | null = null;
   let error: string | null = null;
   try {
-    toolArgs = await callOpenAi(input, tool, userPrompt);
+    gradeJson = await callOpenAi(input, systemPrompt, userPrompt);
   } catch (e) {
     error = String((e as Error)?.message ?? e);
     console.error("[grader] OpenAI grading error:", error);
   }
 
-  if (!toolArgs) {
+  if (!gradeJson) {
     return {
       grade: null,
       applicable_count: 0,
@@ -387,16 +337,18 @@ export async function gradeCallWithOpenAi(input: GradeCallInput): Promise<OpenAi
     };
   }
 
-  const { resultsByKey, applicable, passed, grade } = reduceFailureClasses(toolArgs.results);
-  const { scorecardByKey, repScore } = reduceRepScorecard(toolArgs.rep_scorecard);
+  const failureKeys = new Set(input.failureClasses.map((c) => c.key));
+  const dimensionKeys = new Set(input.repDimensions.map((d) => d.key));
+  const { resultsByKey, applicable, passed, grade } = reduceFailures(gradeJson.failures, failureKeys);
+  const { scorecardByKey, repScore } = reduceScorecard(gradeJson.scorecard, dimensionKeys);
 
   return {
     grade,
     applicable_count: applicable,
     passed_count: passed,
     results: resultsByKey,
-    ai_callout: !!toolArgs.ai_callout,
-    ai_callout_quote: boundedEvidence(toolArgs.ai_callout_quote) || null,
+    ai_callout: !!gradeJson.ai_callout,
+    ai_callout_quote: boundedEvidence(gradeJson.ai_callout_quote) || null,
     rep_score: repScore,
     rep_scorecard: scorecardByKey,
     model: input.model,
