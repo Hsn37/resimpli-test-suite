@@ -10,24 +10,23 @@ import type { Workspace } from "./workspace";
 // workspaceServer.ts re-exports retellKeyForWorkspace, so existing importers of
 // it are unaffected.
 
-// Per-workspace Retell keys. Fall back to the shared RETELL_API_KEY (what the
-// app used before workspaces existed) so nothing breaks when only one key is set.
+// Per-workspace Retell keys. Each workspace MUST have its own key — there is no
+// shared fallback, so a workspace can never silently borrow another's account
+// (e.g. prod falling back to a RETELL_API_KEY that holds the dev key).
 const RETELL_KEY_ENV: Record<Workspace, string> = {
   prod: "RETELL_PROD_KEY",
   dev: "RETELL_DEV_KEY",
 };
-const RETELL_FALLBACK_KEY_ENV = "RETELL_API_KEY";
 
 /**
- * Retell API key for a workspace: the workspace-specific key if set, else the
- * shared RETELL_API_KEY. Throws only when nothing is configured at all.
+ * Retell API key for a workspace, from its dedicated env var. Throws when the
+ * workspace's key isn't configured (no cross-workspace fallback).
  */
 export function retellKeyForWorkspace(workspace: Workspace): string {
-  const key =
-    process.env[RETELL_KEY_ENV[workspace]] || process.env[RETELL_FALLBACK_KEY_ENV];
+  const key = process.env[RETELL_KEY_ENV[workspace]];
   if (!key) {
     throw new Error(
-      `No Retell key configured for workspace "${workspace}" (set ${RETELL_KEY_ENV[workspace]} or ${RETELL_FALLBACK_KEY_ENV})`
+      `No Retell key configured for workspace "${workspace}" (set ${RETELL_KEY_ENV[workspace]})`
     );
   }
   return key;

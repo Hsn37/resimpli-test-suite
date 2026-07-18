@@ -1,22 +1,17 @@
 const RETELL_BASE_URL = "https://api.retellai.com";
 
-function getApiKey(): string {
-  const key = process.env.RETELL_API_KEY;
-  if (!key) throw new Error("RETELL_API_KEY is not set");
-  return key;
-}
-
-// Every request resolves its key here. Callers may pass a workspace-specific
-// key (see retellKeyForWorkspace); omitting it keeps the pre-workspace behaviour
-// of using the shared RETELL_API_KEY, so existing callers stay unchanged.
-function headers(apiKey?: string): HeadersInit {
+// Every request requires an explicit key. Resolve it per workspace via
+// retellKeyForWorkspace (RETELL_DEV_KEY / RETELL_PROD_KEY) — there is no shared
+// RETELL_API_KEY fallback, so a workspace can never silently borrow another
+// workspace's account (e.g. prod falling back to the dev key).
+function headers(apiKey: string): HeadersInit {
   return {
-    Authorization: `Bearer ${apiKey ?? getApiKey()}`,
+    Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
   };
 }
 
-export async function listAgents(apiKey?: string) {
+export async function listAgents(apiKey: string) {
   // is_latest=true returns one entry per agent (its latest version). Without
   // it, /list-agents returns every version, so name lookups can resolve to a
   // stale pre-rename name depending on which version is read last.
@@ -28,7 +23,7 @@ export async function listAgents(apiKey?: string) {
   return res.json();
 }
 
-export async function getAgent(agentId: string, apiKey?: string) {
+export async function getAgent(agentId: string, apiKey: string) {
   const res = await fetch(`${RETELL_BASE_URL}/get-agent/${agentId}`, {
     method: "GET",
     headers: headers(apiKey),
@@ -37,7 +32,7 @@ export async function getAgent(agentId: string, apiKey?: string) {
   return res.json();
 }
 
-export async function getAgentVersions(agentId: string, apiKey?: string) {
+export async function getAgentVersions(agentId: string, apiKey: string) {
   const res = await fetch(
     `${RETELL_BASE_URL}/get-agent-versions/${agentId}`,
     { method: "GET", headers: headers(apiKey) }
@@ -55,7 +50,7 @@ export async function createWebCall(
       conversation_flow?: { start_speaker?: "agent" | "user" };
     };
   },
-  apiKey?: string
+  apiKey: string
 ) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/create-web-call`, {
     method: "POST",
@@ -76,7 +71,7 @@ export async function listCalls(
     filter_criteria?: Record<string, unknown>;
     sort_order?: "ascending" | "descending";
   } = {},
-  apiKey?: string
+  apiKey: string
 ) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/list-calls`, {
     method: "POST",
@@ -92,7 +87,7 @@ export async function listCalls(
   return res.json();
 }
 
-export async function getCall(callId: string, apiKey?: string) {
+export async function getCall(callId: string, apiKey: string) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/get-call/${callId}`, {
     method: "GET",
     headers: headers(apiKey),
@@ -101,10 +96,10 @@ export async function getCall(callId: string, apiKey?: string) {
   return res.json();
 }
 
-export async function listRetellLlms() {
+export async function listRetellLlms(apiKey: string) {
   const res = await fetch(`${RETELL_BASE_URL}/list-retell-llms`, {
     method: "GET",
-    headers: headers(),
+    headers: headers(apiKey),
   });
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
@@ -129,7 +124,7 @@ export interface TestCaseDefinitionInput {
 
 export async function createTestCaseDefinition(
   body: TestCaseDefinitionInput,
-  apiKey?: string
+  apiKey: string
 ) {
   const res = await fetch(`${RETELL_BASE_URL}/create-test-case-definition`, {
     method: "POST",
@@ -148,7 +143,7 @@ export async function createBatchTest(
     response_engine: ResponseEngine;
     test_case_definition_ids: string[];
   },
-  apiKey?: string
+  apiKey: string
 ) {
   const res = await fetch(`${RETELL_BASE_URL}/create-batch-test`, {
     method: "POST",
@@ -162,10 +157,10 @@ export async function createBatchTest(
   return res.json();
 }
 
-export async function getBatchTest(batchId: string) {
+export async function getBatchTest(batchId: string, apiKey: string) {
   const res = await fetch(`${RETELL_BASE_URL}/get-batch-test/${batchId}`, {
     method: "GET",
-    headers: headers(),
+    headers: headers(apiKey),
   });
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
@@ -173,6 +168,7 @@ export async function getBatchTest(batchId: string) {
 
 export async function listTestRuns(
   batchId: string,
+  apiKey: string,
   opts: { limit?: number; paginationKey?: string } = {}
 ) {
   const params = new URLSearchParams();
@@ -181,18 +177,18 @@ export async function listTestRuns(
 
   const res = await fetch(
     `${RETELL_BASE_URL}/v2/list-test-runs/${batchId}?${params.toString()}`,
-    { method: "GET", headers: headers() }
+    { method: "GET", headers: headers(apiKey) }
   );
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
 }
 
 /** Fetch every page of test runs for a batch, following pagination_key until has_more is false. */
-export async function listAllTestRuns(batchId: string) {
+export async function listAllTestRuns(batchId: string, apiKey: string) {
   const items: Record<string, unknown>[] = [];
   let paginationKey: string | undefined;
   for (;;) {
-    const page = await listTestRuns(batchId, { paginationKey });
+    const page = await listTestRuns(batchId, apiKey, { paginationKey });
     items.push(...(page.items ?? []));
     if (!page.has_more || !page.pagination_key) break;
     paginationKey = page.pagination_key;
@@ -201,13 +197,14 @@ export async function listAllTestRuns(batchId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Chat API (used by the AI call grader — a Retell chat agent acts as judge)
+// Chat API (used by the LEGACY Retell call grader — superseded by the OpenAI
+// grader, kept for reference; see src/lib/grader.ts).
 // ---------------------------------------------------------------------------
 
-export async function createRetellLlm(body: { general_prompt: string }) {
+export async function createRetellLlm(body: { general_prompt: string }, apiKey: string) {
   const res = await fetch(`${RETELL_BASE_URL}/create-retell-llm`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(apiKey),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -229,13 +226,16 @@ export type PostChatAnalysisField =
       required?: boolean;
     };
 
-export async function createChatAgent(body: {
-  response_engine: ResponseEngine;
-  post_chat_analysis_data: PostChatAnalysisField[];
-}) {
+export async function createChatAgent(
+  body: {
+    response_engine: ResponseEngine;
+    post_chat_analysis_data: PostChatAnalysisField[];
+  },
+  apiKey: string
+) {
   const res = await fetch(`${RETELL_BASE_URL}/create-chat-agent`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(apiKey),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -245,10 +245,10 @@ export async function createChatAgent(body: {
   return res.json();
 }
 
-export async function createChat(body: { agent_id: string }) {
+export async function createChat(body: { agent_id: string }, apiKey: string) {
   const res = await fetch(`${RETELL_BASE_URL}/create-chat`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(apiKey),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -258,10 +258,13 @@ export async function createChat(body: { agent_id: string }) {
   return res.json();
 }
 
-export async function createChatCompletion(body: { chat_id: string; content: string }) {
+export async function createChatCompletion(
+  body: { chat_id: string; content: string },
+  apiKey: string
+) {
   const res = await fetch(`${RETELL_BASE_URL}/create-chat-completion`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(apiKey),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -271,10 +274,10 @@ export async function createChatCompletion(body: { chat_id: string; content: str
   return res.json();
 }
 
-export async function endChat(chatId: string): Promise<void> {
+export async function endChat(chatId: string, apiKey: string): Promise<void> {
   const res = await fetch(`${RETELL_BASE_URL}/end-chat/${chatId}`, {
     method: "PATCH",
-    headers: headers(),
+    headers: headers(apiKey),
   });
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
 }
@@ -293,10 +296,10 @@ export interface ChatResponse {
   chat_analysis?: ChatAnalysis;
 }
 
-export async function getChat(chatId: string): Promise<ChatResponse> {
+export async function getChat(chatId: string, apiKey: string): Promise<ChatResponse> {
   const res = await fetch(`${RETELL_BASE_URL}/get-chat/${chatId}`, {
     method: "GET",
-    headers: headers(),
+    headers: headers(apiKey),
   });
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();

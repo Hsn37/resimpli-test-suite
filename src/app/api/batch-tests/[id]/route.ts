@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAiGradesForSubjects, insertAiGrade, updateBatchTestRunCounts } from "@/lib/db";
 import { getBatchTest, listAllTestRuns } from "@/lib/retell";
 import { gradeTranscript } from "@/lib/grading";
-import { getServerWorkspace } from "@/lib/workspaceServer";
+import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
 import type { TranscriptTurn } from "@/lib/transcript";
 
 const TERMINAL_RUN_STATUSES = new Set(["pass", "fail", "error"]);
@@ -45,9 +45,10 @@ export async function GET(
   try {
     const { id } = await params;
     const workspace = await getServerWorkspace();
+    const retellKey = retellKeyForWorkspace(workspace);
     const [batch, testRunsRaw] = await Promise.all([
-      getBatchTest(id),
-      listAllTestRuns(id),
+      getBatchTest(id, retellKey),
+      listAllTestRuns(id, retellKey),
     ]);
     const testRuns = testRunsRaw as TestRunRaw[];
 

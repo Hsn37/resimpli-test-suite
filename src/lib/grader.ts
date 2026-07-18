@@ -5,6 +5,8 @@ import "server-only";
 import { createChat, createChatCompletion, endChat, getCall, getChat } from "./retell";
 import { getAiGrade, insertAiGrade } from "./db";
 import { SCORE_MAX } from "./grade";
+import { retellKeyForWorkspace } from "./retellKeys";
+import { DEFAULT_WORKSPACE } from "./workspace";
 import type { TranscriptTurn } from "./transcript";
 
 function getGraderAgentId(): string {
@@ -57,14 +59,15 @@ export async function gradeTranscript(
   context: Record<string, string> = {}
 ): Promise<GradeResult> {
   const agentId = getGraderAgentId();
+  const apiKey = retellKeyForWorkspace(DEFAULT_WORKSPACE);
 
-  const chat = await createChat({ agent_id: agentId });
+  const chat = await createChat({ agent_id: agentId }, apiKey);
   const content = formatGradingMessage(turns, context);
-  await createChatCompletion({ chat_id: chat.chat_id, content });
-  await endChat(chat.chat_id);
+  await createChatCompletion({ chat_id: chat.chat_id, content }, apiKey);
+  await endChat(chat.chat_id, apiKey);
 
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
-    const result = await getChat(chat.chat_id);
+    const result = await getChat(chat.chat_id, apiKey);
     const data = result.chat_analysis?.custom_analysis_data;
     if (result.chat_status === "ended" && data && data.grade != null) {
       return {
@@ -122,8 +125,9 @@ const CALL_READY_MAX_ATTEMPTS = 5; // ~15s cap waiting for Retell's transcript
  * grading happens automatically without anyone needing to open the call.
  */
 export async function gradeCallWhenReady(callId: string): Promise<void> {
+  const apiKey = retellKeyForWorkspace(DEFAULT_WORKSPACE);
   for (let attempt = 0; attempt < CALL_READY_MAX_ATTEMPTS; attempt++) {
-    const call = await getCall(callId).catch(() => null);
+    const call = await getCall(callId, apiKey).catch(() => null);
     const transcriptObject = call?.transcript_object as TranscriptTurn[] | undefined;
     if (transcriptObject && transcriptObject.length > 0) {
       await ensureCallGraded(callId, transcriptObject, call?.retell_llm_dynamic_variables);
