@@ -111,7 +111,7 @@ function dashCallToRow(c: DashCall, classNames: Map<string, string>): CallRowDat
       : undefined;
   return {
     call_id: c.retell_call_id,
-    agent_name: c.voice_name ?? (c.agent_version ? `Agent v${c.agent_version}` : null),
+    agent_name: c.agent_name ?? (c.agent_version ? `Agent v${c.agent_version}` : null),
     call_type: c.agent_version ? `v${c.agent_version}` : undefined,
     direction: "inbound",
     start_timestamp: start,

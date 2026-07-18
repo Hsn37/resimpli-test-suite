@@ -1252,6 +1252,7 @@ export interface DashboardCall {
   timestamp: number | null;
   duration_seconds: number | null;
   phone_number: string | null;
+  agent_name: string | null;
   agent_version: string | null;
   voice_id: string | null;
   voice_name: string | null;
@@ -1313,7 +1314,7 @@ export async function listDashboardCallsInRange(
   const result = await db.execute({
     sql: `SELECT c.id, c.retell_call_id, c.timestamp, c.duration_seconds,
                  c.phone_number, c.agent_version, c.voice_id, c.voice_name,
-                 c.recording_url,
+                 c.recording_url, av.agent_name AS agent_name,
                  g.call_id AS g_call_id, g.grade AS g_grade,
                  g.applicable_count AS g_applicable_count,
                  g.passed_count AS g_passed_count, g.results AS g_results,
@@ -1322,6 +1323,8 @@ export async function listDashboardCallsInRange(
             FROM calls c
             LEFT JOIN call_grades g
               ON g.call_id = c.id AND g.workspace = c.workspace
+            LEFT JOIN agent_voices av
+              ON av.agent_id = c.agent_id AND av.workspace = c.workspace
            WHERE c.workspace = ? AND c.timestamp >= ? AND c.timestamp < ?
            ORDER BY c.timestamp DESC
            LIMIT ?`,
@@ -1336,6 +1339,7 @@ export async function listDashboardCallsInRange(
       duration_seconds:
         row.duration_seconds == null ? null : Number(row.duration_seconds),
       phone_number: (row.phone_number as string) ?? null,
+      agent_name: (row.agent_name as string) ?? null,
       agent_version: (row.agent_version as string) ?? null,
       voice_id: (row.voice_id as string) ?? null,
       voice_name: (row.voice_name as string) ?? null,
@@ -1419,12 +1423,14 @@ export async function getDashboardCallDetail(
     getCallGrade(workspace, id),
   ]);
   if (!call) return null;
+  const voice = call.agent_id ? await getAgentVoice(workspace, call.agent_id) : null;
   return {
     id: call.id,
     retell_call_id: call.retell_call_id,
     timestamp: call.timestamp,
     duration_seconds: call.duration_seconds,
     phone_number: call.phone_number,
+    agent_name: voice?.agent_name ?? null,
     agent_id: call.agent_id,
     agent_version: call.agent_version,
     voice_id: call.voice_id,
