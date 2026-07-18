@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Resimpli Test Suite",
+  title: "ReSimpli Test Suite",
   description: "Voice agent testing tool",
 };
 

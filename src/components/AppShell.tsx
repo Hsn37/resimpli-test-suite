@@ -16,7 +16,7 @@ import {
 import { WorkspaceSwitcher, useWorkspace } from "@/components/WorkspaceProvider";
 import { isAdminEmail } from "@/lib/adminClient";
 
-const APP_TITLE = "Resimpli Test Suite";
+const APP_TITLE = "ReSimpli";
 
 interface NavItem {
   href: string;
@@ -74,12 +74,14 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 // Shared header row (title + workspace switcher). Reused by the desktop sidebar
-// and the mobile drawer so the branding stays consistent.
-function SidebarHeader() {
+// and the mobile drawer so the branding stays consistent. `action` renders on
+// the far right (the desktop sidebar passes the profile/logout button here).
+function SidebarHeader({ action }: { action?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 px-1">
       <h1 className="font-semibold text-sm">{APP_TITLE}</h1>
       <WorkspaceSwitcher />
+      {action && <div className="ml-auto">{action}</div>}
     </div>
   );
 }
@@ -100,13 +102,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-1 min-h-0">
       {/* Desktop sidebar (fixed) */}
-      <aside className="hidden md:flex w-56 shrink-0 flex-col justify-between border-r border-zinc-200 dark:border-zinc-800 p-4 overflow-y-auto">
+      <aside className="hidden md:flex w-56 shrink-0 flex-col border-r border-zinc-200 dark:border-zinc-800 p-4 overflow-y-auto">
         <div className="flex flex-col gap-6">
-          <SidebarHeader />
+          <SidebarHeader action={<UserButton />} />
           <NavLinks />
-        </div>
-        <div className="flex justify-start pt-4">
-          <UserButton />
         </div>
       </aside>
 

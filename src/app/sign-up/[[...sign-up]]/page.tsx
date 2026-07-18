@@ -5,7 +5,7 @@ export default function SignUpPage() {
     <div className="flex flex-col items-center justify-center min-h-screen bg-zinc-50 dark:bg-zinc-950">
       <div className="mb-8 text-center">
         <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-          Resimpli Test Suite
+          ReSimpli Test Suite
         </h1>
         <p className="text-sm text-zinc-500 mt-1">
           Complete your account setup
