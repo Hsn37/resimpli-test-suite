@@ -16,7 +16,7 @@ import {
 import { WorkspaceSwitcher, useWorkspace } from "@/components/WorkspaceProvider";
 import { isAdminEmail } from "@/lib/adminClient";
 
-const APP_TITLE = "ReSimpli";
+const APP_TITLE = "ReSimpli Test Suite";
 
 interface NavItem {
   href: string;
@@ -78,10 +78,12 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
 // the far right (the desktop sidebar passes the profile/logout button here).
 function SidebarHeader({ action }: { action?: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2 px-1">
-      <h1 className="font-semibold text-sm">{APP_TITLE}</h1>
+    <div className="flex flex-col gap-2 px-1">
+      <div className="flex items-center gap-2">
+        <h1 className="font-semibold text-sm">{APP_TITLE}</h1>
+        {action && <div className="ml-auto shrink-0">{action}</div>}
+      </div>
       <WorkspaceSwitcher />
-      {action && <div className="ml-auto">{action}</div>}
     </div>
   );
 }
