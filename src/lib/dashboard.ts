@@ -182,6 +182,7 @@ export interface DashCall {
   timestamp: number | null; // epoch ms
   duration_seconds: number | null;
   phone_number: string | null;
+  agent_name: string | null;
   agent_version: string | null;
   voice_id: string | null;
   voice_name: string | null;
