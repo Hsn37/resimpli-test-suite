@@ -214,7 +214,7 @@ function CallRow({
         </td>
         <td className="py-3 px-3 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="font-medium truncate">{call.agent_name ?? call.call_type ?? "Call"}</span>
+            <span className="font-medium break-words min-w-0">{call.agent_name ?? call.call_type ?? "Call"}</span>
             {call.call_status && (
               <span
                 className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0 ${statusClass}`}
@@ -224,7 +224,7 @@ function CallRow({
             )}
           </div>
           <div className="text-xs text-zinc-500 mt-0.5 truncate">{call.call_type ?? "Call"}</div>
-          <div className="text-[11px] text-zinc-400 font-mono truncate mt-0.5">
+          <div className="text-[11px] text-zinc-400 font-mono break-all mt-0.5">
             {call.call_id}
           </div>
         </td>
