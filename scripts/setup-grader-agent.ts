@@ -17,15 +17,21 @@ import { createChatAgent, createRetellLlm } from "../src/lib/retell";
 import { GRADER_SYSTEM_PROMPT } from "../src/lib/graderPrompt";
 
 async function main() {
+  // The grader agent is a dev-workspace artifact; use the dev Retell key
+  // explicitly (there is no shared RETELL_API_KEY fallback anymore).
+  const RETELL_KEY = process.env.RETELL_DEV_KEY;
+  if (!RETELL_KEY) throw new Error("RETELL_DEV_KEY is not set");
+
   console.log("Creating grader retell-llm...");
-  const llm = await createRetellLlm({ general_prompt: GRADER_SYSTEM_PROMPT });
+  const llm = await createRetellLlm({ general_prompt: GRADER_SYSTEM_PROMPT }, RETELL_KEY);
   const llmId = llm.llm_id;
   console.log(`  llm_id: ${llmId}`);
 
   console.log("Creating grader chat agent...");
-  const agent = await createChatAgent({
-    response_engine: { type: "retell-llm", llm_id: llmId },
-    post_chat_analysis_data: [
+  const agent = await createChatAgent(
+    {
+      response_engine: { type: "retell-llm", llm_id: llmId },
+      post_chat_analysis_data: [
       {
         type: "number",
         name: "grade",
@@ -39,8 +45,10 @@ async function main() {
           "One short sentence explaining the score, naming the 1-2 most relevant heuristics.",
         required: true,
       },
-    ],
-  });
+      ],
+    },
+    RETELL_KEY
+  );
 
   console.log("\nDone. Add this to .env:");
   console.log(`RETELL_GRADER_AGENT_ID=${agent.agent_id}`);
