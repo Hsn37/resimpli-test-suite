@@ -6,6 +6,7 @@ import {
   upsertAgentVoice,
   backfillCallVoices,
   listUngradedCalls,
+  countGradeableUngraded,
   type Call,
 } from "./db";
 import { APP_CONFIG_KEYS } from "./graderRubric";
@@ -242,9 +243,15 @@ async function listEligibleUngraded(workspace: Workspace): Promise<Call[]> {
   return ungraded.filter((c) => isEligible(c, trackingStart));
 }
 
-/** Count of eligible ungraded calls — what automation still has to grade. */
+/**
+ * Count of gradeable ungraded calls across all time — the true backlog behind
+ * the dashboard "Ungraded calls" stat. Unlike listEligibleUngraded (the grade
+ * runner's view), this has no scan cap and no tracking-start window, so it
+ * counts every ungraded call ever; it still honors the ≥MIN_DURATION_SECONDS +
+ * non-empty-transcript eligibility gate.
+ */
 export async function countPendingGrades(workspace: Workspace): Promise<number> {
-  return (await listEligibleUngraded(workspace)).length;
+  return countGradeableUngraded(workspace, MIN_DURATION_SECONDS);
 }
 
 /** Eligibility guard — mirrors ingestion filters so ungradeable rows drop out. */

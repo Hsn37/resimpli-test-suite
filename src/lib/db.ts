@@ -1765,3 +1765,32 @@ export async function listUngradedCalls(
   );
 }
 
+/**
+ * Count of *gradeable* ungraded calls in a workspace, across all time — every
+ * call with no successful grade (no grade row, or only an errored one) that
+ * still clears the eligibility gate (duration ≥ min, non-empty transcript).
+ * Mirrors listUngradedCalls' ungraded predicate but as an aggregate COUNT: no
+ * scan cap and no tracking-start window, so it reflects the true all-time
+ * backlog rather than a bounded, date-windowed slice. Powers the dashboard
+ * "Ungraded calls" stat. (Stored calls already pass ingestion's duration /
+ * transcript filters, so those guards mainly exclude manual bypass-graded rows.)
+ */
+export async function countGradeableUngraded(
+  workspace: Workspace,
+  minDurationSeconds: number
+): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT COUNT(*) AS n FROM calls c
+            LEFT JOIN call_grades g
+              ON g.workspace = c.workspace AND g.call_id = c.id
+           WHERE c.workspace = ?
+             AND (g.call_id IS NULL OR g.error IS NOT NULL)
+             AND (c.duration_seconds IS NULL OR c.duration_seconds >= ?)
+             AND c.transcript IS NOT NULL
+             AND c.transcript NOT IN ('null', '[]', '')`,
+    args: [workspace, minDurationSeconds],
+  });
+  return Number(result.rows[0]?.n ?? 0);
+}
+
