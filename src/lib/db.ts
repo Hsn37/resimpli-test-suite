@@ -34,7 +34,11 @@ function getClient(): Client {
   return client;
 }
 
-// Idempotent schema creation, run at most once per process.
+// Idempotent schema creation, memoized at most once per process. In production
+// the request path skips this (see getDb) — the deploy-time migration
+// (scripts/migrate.ts → migrateSchema) owns DDL there, so cold starts pay no
+// round-trips. This stays as the zero-setup lazy bootstrap for local dev + CLI
+// scripts.
 function ensureSchema(): Promise<void> {
   if (schemaReady) return schemaReady;
   const db = getClient();
@@ -271,6 +275,15 @@ function ensureSchema(): Promise<void> {
   return ready;
 }
 
+/**
+ * Apply the full schema once. Entry point for the deploy-time migration step
+ * (`npm run migrate`, wired into the build). Reuses ensureSchema's idempotent
+ * DDL + seed so there is a single source of truth for the schema.
+ */
+export function migrateSchema(): Promise<void> {
+  return ensureSchema();
+}
+
 // ---------------------------------------------------------------------------
 // Call-grader seed (idempotent). INSERT OR IGNORE so admin edits to a
 // workspace's rubric/config are never clobbered on re-bootstrap.
@@ -317,7 +330,10 @@ async function seedGraderRubric(db: Client): Promise<void> {
 }
 
 export async function getDb(): Promise<Client> {
-  await ensureSchema();
+  // Production applies the schema at deploy time (scripts/migrate.ts), so the
+  // request path never runs DDL. Outside production we lazily bootstrap once per
+  // process for zero-setup local dev and CLI scripts.
+  if (process.env.NODE_ENV !== "production") await ensureSchema();
   return getClient();
 }
 
@@ -1768,12 +1784,16 @@ export async function listUngradedCalls(
 /**
  * Count of *gradeable* ungraded calls in a workspace, across all time — every
  * call with no successful grade (no grade row, or only an errored one) that
- * still clears the eligibility gate (duration ≥ min, non-empty transcript).
- * Mirrors listUngradedCalls' ungraded predicate but as an aggregate COUNT: no
- * scan cap and no tracking-start window, so it reflects the true all-time
- * backlog rather than a bounded, date-windowed slice. Powers the dashboard
- * "Ungraded calls" stat. (Stored calls already pass ingestion's duration /
- * transcript filters, so those guards mainly exclude manual bypass-graded rows.)
+ * still clears the duration floor. Mirrors listUngradedCalls' ungraded
+ * predicate but as an aggregate COUNT: no scan cap and no tracking-start
+ * window, so it reflects the true all-time backlog rather than a bounded,
+ * date-windowed slice. Powers the dashboard "Ungraded calls" stat.
+ *
+ * We deliberately omit a transcript check: ingestion drops empty-transcript
+ * calls as a hard skip (even in manual bypass mode — see ingestion.ts), so no
+ * stored call lacks one, and probing the wide `transcript` TEXT per row just to
+ * re-confirm that would force overflow-page reads across the whole scan. The
+ * duration floor stays — manual bypass-graded rows can be under the minimum.
  */
 export async function countGradeableUngraded(
   workspace: Workspace,
@@ -1786,9 +1806,7 @@ export async function countGradeableUngraded(
               ON g.workspace = c.workspace AND g.call_id = c.id
            WHERE c.workspace = ?
              AND (g.call_id IS NULL OR g.error IS NOT NULL)
-             AND (c.duration_seconds IS NULL OR c.duration_seconds >= ?)
-             AND c.transcript IS NOT NULL
-             AND c.transcript NOT IN ('null', '[]', '')`,
+             AND (c.duration_seconds IS NULL OR c.duration_seconds >= ?)`,
     args: [workspace, minDurationSeconds],
   });
   return Number(result.rows[0]?.n ?? 0);

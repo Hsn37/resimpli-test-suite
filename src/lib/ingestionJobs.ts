@@ -247,8 +247,8 @@ async function listEligibleUngraded(workspace: Workspace): Promise<Call[]> {
  * Count of gradeable ungraded calls across all time — the true backlog behind
  * the dashboard "Ungraded calls" stat. Unlike listEligibleUngraded (the grade
  * runner's view), this has no scan cap and no tracking-start window, so it
- * counts every ungraded call ever; it still honors the ≥MIN_DURATION_SECONDS +
- * non-empty-transcript eligibility gate.
+ * counts every ungraded call ever; it still honors the ≥MIN_DURATION_SECONDS
+ * floor (the transcript check is redundant — ingestion never stores empty ones).
  */
 export async function countPendingGrades(workspace: Workspace): Promise<number> {
   return countGradeableUngraded(workspace, MIN_DURATION_SECONDS);

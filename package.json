@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "migrate": "tsx --conditions=react-server scripts/migrate.ts",
+    "build": "npm run migrate && next build",
     "start": "next start",
     "lint": "eslint",
     "setup-grader": "tsx scripts/setup-grader-agent.ts"
