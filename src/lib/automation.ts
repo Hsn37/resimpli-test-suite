@@ -1,5 +1,5 @@
 import "server-only";
-import { getAppConfig } from "./db";
+import { getAppConfig, setAppConfig } from "./db";
 import { APP_CONFIG_KEYS } from "./graderRubric";
 import type { Workspace } from "./workspace";
 
@@ -9,6 +9,7 @@ import type { Workspace } from "./workspace";
 
 export const BACKFILL_CURSOR_KEY = "backfill_cursor";
 export const LAST_VOICE_SYNC_KEY = "last_voice_sync_at";
+export const LAST_TICK_KEY = "last_tick_at";
 export const VOICE_SYNC_INTERVAL_MS = 60 * 60 * 1000; // opportunistic, hourly
 export const CRON_SECRET_HEADER = "x-cron-secret";
 export const VERCEL_CRON_HEADER = "x-vercel-cron";
@@ -48,4 +49,20 @@ export function isCronAuthorized(headers: Headers, secretParam: string | null): 
   if (!secret) return false;
   const provided = headers.get(CRON_SECRET_HEADER) ?? secretParam;
   return provided === secret;
+}
+
+/** Stamp the last time the cron tick touched this workspace (epoch ms). */
+export async function recordTick(workspace: Workspace): Promise<void> {
+  await setAppConfig(workspace, LAST_TICK_KEY, Date.now());
+}
+
+/** Epoch ms of the last cron tick for a workspace, or null if never ticked. */
+export async function getLastTickAt(workspace: Workspace): Promise<number | null> {
+  const v = await getAppConfig<number | string>(workspace, LAST_TICK_KEY);
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const parsed = Date.parse(v);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
 }

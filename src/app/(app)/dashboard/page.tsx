@@ -8,6 +8,7 @@ import TrendsChart from "./TrendsChart";
 import CallsTable, { type CallRowData } from "@/components/CallsTable";
 import CallViewer from "@/components/CallViewer";
 import IngestionTriggers from "@/components/IngestionTriggers";
+import AutomationStats from "@/components/AutomationStats";
 import { humanAiNote, isViolated, type CallRowGrade } from "@/lib/callGrade";
 import { downloadJson } from "@/lib/downloadRecording";
 import {
@@ -453,6 +454,9 @@ function DashboardContent() {
           )}
         </div>
       )}
+
+      {/* Automation stats (admin-only) — sits right under the backfill section. */}
+      {isAdmin && <AutomationStats />}
 
       {/* Filters */}
       <div className={CARD}>

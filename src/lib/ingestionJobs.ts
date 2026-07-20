@@ -235,6 +235,18 @@ export interface GradePendingResult {
   remaining: number;
 }
 
+/** The eligible, still-ungraded calls in a workspace (capped at the scan limit). */
+async function listEligibleUngraded(workspace: Workspace): Promise<Call[]> {
+  const trackingStart = await getTrackingStartDate(workspace);
+  const ungraded = await listUngradedCalls(workspace, UNGRADED_SCAN_LIMIT);
+  return ungraded.filter((c) => isEligible(c, trackingStart));
+}
+
+/** Count of eligible ungraded calls — what automation still has to grade. */
+export async function countPendingGrades(workspace: Workspace): Promise<number> {
+  return (await listEligibleUngraded(workspace)).length;
+}
+
 /** Eligibility guard — mirrors ingestion filters so ungradeable rows drop out. */
 function isEligible(call: Call, trackingStart: Date | null): boolean {
   if (call.duration_seconds != null && call.duration_seconds < MIN_DURATION_SECONDS) return false;
@@ -261,9 +273,7 @@ async function runConcurrent<T>(items: T[], n: number, fn: (t: T) => Promise<voi
  * empty OPENAI_API_KEY (each grade stores an error row, never throws).
  */
 export async function runGradePending(workspace: Workspace): Promise<GradePendingResult> {
-  const trackingStart = await getTrackingStartDate(workspace);
-  const ungraded = await listUngradedCalls(workspace, UNGRADED_SCAN_LIMIT);
-  const eligible = ungraded.filter((c) => isEligible(c, trackingStart));
+  const eligible = await listEligibleUngraded(workspace);
   const batch = eligible.slice(0, GRADE_BATCH_SIZE);
 
   let graded = 0;

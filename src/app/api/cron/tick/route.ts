@@ -6,6 +6,7 @@ import {
   isAutomationEnabled,
   isBackfillComplete,
   isVoiceSyncDue,
+  recordTick,
 } from "@/lib/automation";
 import { runBackfill, runGradePending, runVoiceSync } from "@/lib/ingestionJobs";
 
@@ -61,6 +62,9 @@ async function handle(request: NextRequest) {
 
   const ticks: WorkspaceTick[] = [];
   for (const workspace of WORKSPACES) {
+    // Stamp the tick time first so the dashboard's "last run" reflects every
+    // invocation, even one that ends up paused or erroring below.
+    await recordTick(workspace);
     try {
       ticks.push(await tickWorkspace(workspace));
     } catch (err) {
