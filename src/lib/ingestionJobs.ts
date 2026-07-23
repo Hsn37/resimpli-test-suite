@@ -33,9 +33,14 @@ import type { Workspace } from "./workspace";
 // ---------------------------------------------------------------------------
 // Backfill
 // ---------------------------------------------------------------------------
-const BACKFILL_PAGE_SIZE = 100;
-const MAX_CALLS_PER_INVOCATION = 200; // cap per run to stay under serverless timeouts
-const BACKFILL_SOFT_DEADLINE_MS = 25_000; // stop starting new pages after ~25s
+// Backfill grades each page inline, so a page is one grading wave. Keep it at
+// GRADE_CONCURRENCY (15) so an import tick grades ~one wave (~6s) and stays under
+// ~10s — the same per-tick cost as steady-state grade-pending. Catch-up just
+// spans more (fast) ticks. The cursor advances per page, so a page is the
+// resumable unit; the soft deadline stops starting further pages.
+const BACKFILL_PAGE_SIZE = 15;
+const MAX_CALLS_PER_INVOCATION = 45; // safety ceiling; the soft deadline usually stops first
+const BACKFILL_SOFT_DEADLINE_MS = 8_000; // stop starting new pages after ~8s → ≤~10s/tick
 
 export interface BackfillCounters {
   fetched: number;
