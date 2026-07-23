@@ -33,6 +33,8 @@ const CSV_COLUMNS = [
   "duration_seconds",
   "user_email",
   "grade",
+  "rep_score",
+  "grade100",
   "note",
   "call_status",
   "from_number",
@@ -43,14 +45,15 @@ const CSV_COLUMNS = [
   "transcript",
 ] as const;
 
-// Transcript + variables aren't in the list payload, so the export fetches each
-// call's full detail. How many of those /api/calls/[id] fetches run at once.
-const EXPORT_FETCH_CONCURRENCY = 6;
-
 // Default export excludes calls that are ungraded OR have no recording. The
-// "Include empty / ungraded calls" checkbox overrides this.
+// "Include empty / ungraded calls" checkbox overrides this. A call counts as
+// graded if it has EITHER the legacy star grade (tool-placed calls) or the
+// 0-100 grade from call_grades (rep_score/grade100) — prod's migrated calls
+// only have the latter, so keying off `grade` alone excluded all of them.
 function isExportableByDefault(call: CallRowData): boolean {
-  return call.grade != null && !!call.recording_url;
+  const isGraded =
+    call.grade != null || call.rep_score != null || call.grade100 != null;
+  return isGraded && !!call.recording_url;
 }
 
 // Inclusive date-range test over a call's start_timestamp. Calls without a
@@ -73,8 +76,6 @@ interface ExportDetail {
   transcript: string;
 }
 
-const EMPTY_EXPORT_DETAIL: ExportDetail = { variables: "", transcript: "" };
-
 // Variables are serialized as JSON; transcript prefers the plain string and
 // falls back to the structured transcript_object when it's absent.
 function detailToExportFields(data: Record<string, unknown>): ExportDetail {
@@ -96,18 +97,6 @@ function detailToExportFields(data: Record<string, unknown>): ExportDetail {
   return { variables, transcript };
 }
 
-// Fetch one call's full detail for export. Failure-tolerant so a single bad
-// call never aborts the whole CSV — it just exports blank variables/transcript.
-async function fetchExportDetail(callId: string): Promise<ExportDetail> {
-  try {
-    const res = await fetch(`/api/calls/${callId}`);
-    if (!res.ok) throw new Error("Failed to fetch call detail");
-    return detailToExportFields(await res.json());
-  } catch {
-    return EMPTY_EXPORT_DETAIL;
-  }
-}
-
 // One CSV data row in CSV_COLUMNS order. Escaping is handled by downloadCsv.
 function callToCsvRow(
   call: CallRowData,
@@ -126,6 +115,8 @@ function callToCsvRow(
     duration,
     call.user_email ?? "",
     call.grade ?? "",
+    call.rep_score ?? "",
+    call.grade100 ?? "",
     call.note ?? "",
     call.call_status ?? "",
     call.from_number ?? "",
@@ -158,14 +149,14 @@ function CallsContent() {
   const [exportStart, setExportStart] = useState("");
   const [exportEnd, setExportEnd] = useState("");
   const [includeEmpty, setIncludeEmpty] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const { toast } = useToast();
 
   // Export the in-memory calls within the chosen date range to CSV. Excludes
   // ungraded/empty calls unless "Include empty / ungraded calls" is checked.
-  // Each call's variables + transcript are fetched from its full detail
-  // (bounded concurrency), since the list payload doesn't carry them.
-  async function handleExport() {
+  // Variables + transcript come straight from the loaded list payload — Retell
+  // list-calls already carries transcript_object + retell_llm_dynamic_variables
+  // (the backfill path ingests off the same fields), so no per-call refetch.
+  function handleExport() {
     const startMs = exportStart
       ? new Date(`${exportStart}T00:00:00`).getTime()
       : null;
@@ -184,28 +175,19 @@ function CallsContent() {
       return;
     }
 
-    setExporting(true);
-    try {
-      const details: ExportDetail[] = new Array(selected.length);
-      for (let i = 0; i < selected.length; i += EXPORT_FETCH_CONCURRENCY) {
-        const batch = selected.slice(i, i + EXPORT_FETCH_CONCURRENCY);
-        const resolved = await Promise.all(
-          batch.map((c) => fetchExportDetail(c.call_id))
-        );
-        resolved.forEach((d, j) => (details[i + j] = d));
-      }
-
-      const filename = [EXPORT_FILENAME_PREFIX, exportStart, exportEnd]
-        .filter(Boolean)
-        .join("_");
-      downloadCsv(
-        [[...CSV_COLUMNS], ...selected.map((c, i) => callToCsvRow(c, details[i]))],
-        `${filename}.csv`
-      );
-      setExportOpen(false);
-    } finally {
-      setExporting(false);
-    }
+    const filename = [EXPORT_FILENAME_PREFIX, exportStart, exportEnd]
+      .filter(Boolean)
+      .join("_");
+    downloadCsv(
+      [
+        [...CSV_COLUMNS],
+        ...selected.map((c) =>
+          callToCsvRow(c, detailToExportFields(c as unknown as Record<string, unknown>))
+        ),
+      ],
+      `${filename}.csv`
+    );
+    setExportOpen(false);
   }
 
   async function handleDownload(callId: string) {
@@ -280,6 +262,27 @@ function CallsContent() {
     const set = new Set<string>();
     for (const c of calls) if (c.user_email) set.add(c.user_email);
     return Array.from(set).sort();
+  }, [calls]);
+
+  // The calendar span actually present in the loaded window, so the export
+  // date picker can only offer dates that have data behind them.
+  const exportDateBounds = useMemo(() => {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const c of calls) {
+      const ts = c.start_timestamp;
+      if (ts == null) continue;
+      if (ts < min) min = ts;
+      if (ts > max) max = ts;
+    }
+    if (min === Infinity) return { min: "", max: "" };
+    const toDay = (ms: number) => {
+      const d = new Date(ms);
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${d.getFullYear()}-${m}-${day}`;
+    };
+    return { min: toDay(min), max: toDay(max) };
   }, [calls]);
 
   const filtered = useMemo(() => {
@@ -423,6 +426,8 @@ function CallsContent() {
                   <input
                     type="date"
                     value={exportStart}
+                    min={exportDateBounds.min}
+                    max={exportEnd || exportDateBounds.max}
                     onChange={(e) => setExportStart(e.target.value)}
                     className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -432,6 +437,8 @@ function CallsContent() {
                   <input
                     type="date"
                     value={exportEnd}
+                    min={exportStart || exportDateBounds.min}
+                    max={exportDateBounds.max}
                     onChange={(e) => setExportEnd(e.target.value)}
                     className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -447,20 +454,10 @@ function CallsContent() {
                 </label>
                 <button
                   onClick={handleExport}
-                  disabled={exporting}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
                 >
-                  {exporting ? (
-                    <>
-                      <Loader2 size={15} className="animate-spin" />
-                      Exporting…
-                    </>
-                  ) : (
-                    <>
-                      <Download size={15} />
-                      Export CSV
-                    </>
-                  )}
+                  <Download size={15} />
+                  Export CSV
                 </button>
               </div>
             </>
