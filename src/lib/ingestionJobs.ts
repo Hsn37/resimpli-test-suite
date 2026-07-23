@@ -163,7 +163,9 @@ export async function runBackfill(opts: {
       }
       counters.fetched += page.calls.length;
 
-      for (const call of page.calls) {
+      // Ingest + grade the page in parallel (bounded). Counter mutations are
+      // safe — JS is single-threaded, so the awaits interleave without races.
+      await runConcurrent(page.calls, GRADE_CONCURRENCY, async (call) => {
         const result = await ingestCall({
           workspace,
           call,
@@ -174,11 +176,11 @@ export async function runBackfill(opts: {
         });
         if (result.skip) {
           counters.skipped[result.skip] += 1;
-          continue;
+          return;
         }
         if (!result.callRowId) {
           counters.failed += 1;
-          continue;
+          return;
         }
         counters.ingested += 1;
         try {
@@ -189,7 +191,7 @@ export async function runBackfill(opts: {
           counters.gradeErrors += 1;
           console.error("[backfill] grade failed", result.callRowId, e);
         }
-      }
+      });
 
       if (!page.nextKey || page.nextKey === paginationKey) {
         done = true;
@@ -225,7 +227,10 @@ export async function runBackfill(opts: {
 // ---------------------------------------------------------------------------
 const UNGRADED_SCAN_LIMIT = 1000;
 const GRADE_BATCH_SIZE = 15;
-const GRADE_CONCURRENCY = 3;
+// Grades are independent, I/O-bound LLM calls, so run them in parallel. Sized to
+// clear a full grade-pending batch in a single wave (~one request's latency)
+// instead of BATCH/CONCURRENCY serial waves. Also used by the backfill loop.
+const GRADE_CONCURRENCY = 15;
 
 export interface GradePendingResult {
   ok: boolean;

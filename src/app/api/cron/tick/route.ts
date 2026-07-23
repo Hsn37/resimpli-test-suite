@@ -10,6 +10,10 @@ import {
 } from "@/lib/automation";
 import { runBackfill, runGradePending, runVoiceSync } from "@/lib/ingestionJobs";
 
+// Grades run in parallel now, but a single slow OpenAI call can still take its
+// full 30s timeout — give the tick headroom so a slow wave isn't killed midway.
+export const maxDuration = 60;
+
 // Automation cron. One unit of work per workspace per tick:
 //   - automation paused        → skip
 //   - backfill not complete     → run one backfill chunk
@@ -60,21 +64,23 @@ async function handle(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const ticks: WorkspaceTick[] = [];
-  for (const workspace of WORKSPACES) {
-    // Stamp the tick time first so the dashboard's "last run" reflects every
-    // invocation, even one that ends up paused or erroring below.
-    await recordTick(workspace);
-    try {
-      ticks.push(await tickWorkspace(workspace));
-    } catch (err) {
-      ticks.push({
-        workspace,
-        action: "error",
-        error: err instanceof Error ? err.message : "tick failed",
-      });
-    }
-  }
+  // Workspaces share no state, so run them concurrently — the tick's wall time
+  // is one workspace's work, not the sum. Each stamps its tick time first so the
+  // dashboard's "last run" reflects every invocation, even a paused/errored one.
+  const ticks = await Promise.all(
+    WORKSPACES.map(async (workspace): Promise<WorkspaceTick> => {
+      await recordTick(workspace);
+      try {
+        return await tickWorkspace(workspace);
+      } catch (err) {
+        return {
+          workspace,
+          action: "error",
+          error: err instanceof Error ? err.message : "tick failed",
+        };
+      }
+    })
+  );
   return NextResponse.json({ ok: true, ticks });
 }
 
