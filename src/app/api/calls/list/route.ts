@@ -52,11 +52,19 @@ export async function GET(request: Request) {
     //  • from/to (epoch ms) — narrow the list to a start_timestamp window via
     //    Retell's filter_criteria, still capped at one 1000-call page.
     const callIdParam = searchParams.get("call_id")?.trim();
-    const fromParam = Number(searchParams.get("from"));
-    const toParam = Number(searchParams.get("to"));
+    // NB: read the raw strings first — Number(null) is 0 (a finite number), so
+    // coercing a MISSING param would wrongly build a 0..0 filter and drop every
+    // call. Only build the filter when both params are actually present.
+    const fromRaw = searchParams.get("from");
+    const toRaw = searchParams.get("to");
     const rangeFilter =
-      Number.isFinite(fromParam) && Number.isFinite(toParam)
-        ? { start_timestamp: { lower_threshold: fromParam, upper_threshold: toParam } }
+      fromRaw && toRaw && Number.isFinite(Number(fromRaw)) && Number.isFinite(Number(toRaw))
+        ? {
+            start_timestamp: {
+              lower_threshold: Number(fromRaw),
+              upper_threshold: Number(toRaw),
+            },
+          }
         : undefined;
 
     // Kick off the agent-name lookup in parallel with paging through calls.
