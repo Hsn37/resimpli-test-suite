@@ -102,7 +102,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex flex-1 min-h-0">
+    // Pin the shell to the viewport height (dvh handles mobile browser chrome)
+    // so the sidebar and page frame stay static and <main> is the sole vertical
+    // scroll container. Without a bounded height here, tall pages grow <body>
+    // (min-h-full) and the whole window scrolls, dragging the sidebar with it.
+    <div className="flex h-dvh min-h-0">
       {/* Desktop sidebar (fixed) */}
       <aside className="hidden md:flex w-56 shrink-0 flex-col border-r border-zinc-200 dark:border-zinc-800 p-4 overflow-y-auto">
         <div className="flex flex-col gap-6">
