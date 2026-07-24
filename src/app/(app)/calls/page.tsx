@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  Calendar,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -132,9 +133,22 @@ const PAGE_SIZE = 50;
 // The calls page loads the LAST 1000 calls only, then filters/sorts/paginates
 // over that window client-side. Retell's list-calls is ~5s per 1000-call page,
 // so pulling more means multiple sequential pages that blow past the route's
-// 30s budget (a 5000 fetch 500'd). 1000 = one page, fast. For older/full history
-// use the dashboard (its own date-range query), not this recent-calls view.
+// 30s budget (a 5000 fetch 500'd). 1000 = one page, fast. The date-range loader
+// reuses this same cap over a from/to window.
 const FETCH_LIMIT = 1000;
+
+// Retell call IDs are `call_` followed by an alphanumeric token. Used to detect
+// when a search query is an exact ID worth fetching straight from Retell.
+const CALL_ID_RE = /^call_[a-zA-Z0-9]+$/;
+
+// Shared fetch for the /api/calls/list endpoint (recent window, a date range,
+// or a single call_id). Normalizes the array-or-{calls} response shape.
+async function fetchCalls(query: string): Promise<CallRowData[]> {
+  const res = await fetch(`/api/calls/list?${query}`);
+  if (!res.ok) throw new Error("Failed to fetch calls");
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.calls ?? [];
+}
 
 function CallsContent() {
   const [calls, setCalls] = useState<CallRowData[]>([]);
@@ -149,6 +163,13 @@ function CallsContent() {
   const [exportStart, setExportStart] = useState("");
   const [exportEnd, setExportEnd] = useState("");
   const [includeEmpty, setIncludeEmpty] = useState(false);
+  // Date-range loader (replaces the recent window with a Retell from/to fetch).
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null);
+  // True while auto-fetching a searched call ID that isn't in the loaded window.
+  const [lookupBusy, setLookupBusy] = useState(false);
   const { toast } = useToast();
 
   // Export the in-memory calls within the chosen date range to CSV. Excludes
@@ -236,15 +257,9 @@ function CallsContent() {
     // pagination all run over this full set so pagination happens after
     // filtering (not over Retell's unfiltered cursor stream).
     let cancelled = false;
-    fetch(`/api/calls/list?limit=${FETCH_LIMIT}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch calls");
-        return res.json();
-      })
-      .then((data) => {
-        if (cancelled) return;
-        const list: CallRowData[] = Array.isArray(data) ? data : data.calls ?? [];
-        setCalls(list);
+    fetchCalls(`limit=${FETCH_LIMIT}`)
+      .then((list) => {
+        if (!cancelled) setCalls(list);
       })
       .catch((err) => {
         if (!cancelled) toast(err.message, "error");
@@ -256,6 +271,74 @@ function CallsContent() {
       cancelled = true;
     };
   }, [toast]);
+
+  // When the search text is a Retell call ID that isn't in the loaded window,
+  // fetch that single call straight from Retell and inject it — so IDs from
+  // outside the recent/range window are still findable. Debounced so we don't
+  // fire while an ID is mid-paste/edit.
+  useEffect(() => {
+    const q = search.trim();
+    if (!CALL_ID_RE.test(q) || calls.some((c) => c.call_id === q)) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setLookupBusy(true);
+      fetchCalls(`call_id=${encodeURIComponent(q)}`)
+        .then((list) => {
+          if (cancelled || list.length === 0) return;
+          setCalls((prev) =>
+            prev.some((c) => c.call_id === list[0].call_id)
+              ? prev
+              : [list[0], ...prev]
+          );
+        })
+        // Silent: the empty state already explains that no call was found.
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setLookupBusy(false);
+        });
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setLookupBusy(false);
+    };
+  }, [search, calls]);
+
+  // Load a from/to window from Retell, replacing the recent window (range mode).
+  async function loadRange() {
+    if (!rangeStart || !rangeEnd) return;
+    const fromMs = new Date(`${rangeStart}T00:00:00`).getTime();
+    const toMs = new Date(`${rangeEnd}T23:59:59.999`).getTime();
+    setRangeOpen(false);
+    setLoading(true);
+    try {
+      const list = await fetchCalls(`from=${fromMs}&to=${toMs}&limit=${FETCH_LIMIT}`);
+      setCalls(list);
+      setRange({ from: rangeStart, to: rangeEnd });
+      setPage(1);
+      setPlayingCallId(null);
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : "Failed to load range", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Drop range mode and reload the default recent window.
+  async function clearRange() {
+    setLoading(true);
+    try {
+      const list = await fetchCalls(`limit=${FETCH_LIMIT}`);
+      setCalls(list);
+      setRange(null);
+      setPage(1);
+      setPlayingCallId(null);
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : "Failed to load calls", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   // Distinct users across the loaded window (calls placed from this tool).
   const users = useMemo(() => {
@@ -319,6 +402,7 @@ function CallsContent() {
   }, [calls, search, userFilter, sort]);
 
   const isFiltering = search.trim() !== "" || userFilter !== "all" || sort !== "newest";
+  const isCallIdQuery = CALL_ID_RE.test(search.trim());
 
   // Paginate the filtered/sorted set, so pages reflect the active filters.
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -336,6 +420,19 @@ function CallsContent() {
             {isFiltering
               ? `${filtered.length} of ${calls.length}`
               : `${calls.length} call${calls.length === 1 ? "" : "s"}`}
+          </span>
+        )}
+        {range && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
+            <Calendar size={12} />
+            {range.from} → {range.to}
+            <button
+              onClick={clearRange}
+              aria-label="Clear date range"
+              className="hover:text-blue-900 dark:hover:text-blue-100"
+            >
+              <X size={13} />
+            </button>
           </span>
         )}
       </div>
@@ -356,16 +453,23 @@ function CallsContent() {
             placeholder="Search by call ID, agent, type, number, or note..."
             className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-9 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
           />
-          {search && (
-            <button
-              onClick={() => {
-                setSearch("");
-                setPage(1);
-              }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
-            >
-              <X size={15} />
-            </button>
+          {lookupBusy ? (
+            <Loader2
+              size={15}
+              className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-zinc-400"
+            />
+          ) : (
+            search && (
+              <button
+                onClick={() => {
+                  setSearch("");
+                  setPage(1);
+                }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+              >
+                <X size={15} />
+              </button>
+            )
           )}
         </div>
 
@@ -403,6 +507,60 @@ function CallsContent() {
             <option value="rating-asc">Rating: low to high</option>
           </select>
         </label>
+
+        <div className="relative">
+          <button
+            onClick={() => setRangeOpen((o) => !o)}
+            className="flex items-center gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <Calendar size={15} />
+            Date range
+          </button>
+          {rangeOpen && (
+            <>
+              <button
+                type="button"
+                aria-label="Close date range"
+                onClick={() => setRangeOpen(false)}
+                className="fixed inset-0 z-10 cursor-default"
+              />
+              <div className="absolute right-0 z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-lg space-y-3">
+                <p className="text-xs text-zinc-500">
+                  Load calls from Retell in a date range (newest {FETCH_LIMIT}),
+                  even ones outside the recent window.
+                </p>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-zinc-500">Start date</label>
+                  <input
+                    type="date"
+                    value={rangeStart}
+                    max={rangeEnd || undefined}
+                    onChange={(e) => setRangeStart(e.target.value)}
+                    className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-zinc-500">End date</label>
+                  <input
+                    type="date"
+                    value={rangeEnd}
+                    min={rangeStart || undefined}
+                    onChange={(e) => setRangeEnd(e.target.value)}
+                    className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <button
+                  onClick={loadRange}
+                  disabled={!rangeStart || !rangeEnd}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Calendar size={15} />
+                  Load range
+                </button>
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="relative">
           <button
@@ -471,7 +629,13 @@ function CallsContent() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-8 text-zinc-500 text-sm">
-          {calls.length === 0 ? "No calls yet." : "No calls match your filters."}
+          {isCallIdQuery && lookupBusy
+            ? `Searching Retell for ${search.trim()}…`
+            : isCallIdQuery
+            ? `No call found for ${search.trim()}.`
+            : calls.length === 0
+            ? "No calls yet."
+            : "No calls match your filters."}
         </div>
       ) : (
         <CallsTable

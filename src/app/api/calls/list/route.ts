@@ -1,5 +1,5 @@
 import { NextResponse, after } from "next/server";
-import { listAgents, listCalls } from "@/lib/retell";
+import { getCall, listAgents, listCalls } from "@/lib/retell";
 import {
   getCallGradesByIds,
   getCallLogsByIds,
@@ -46,26 +46,48 @@ export async function GET(request: Request) {
     const workspace = await getServerWorkspace();
     const apiKey = retellKeyForWorkspace(workspace);
 
+    // Optional refinements over the default recent window:
+    //  • call_id — fetch that one call straight from Retell, so an ID outside
+    //    the loaded window (or from an old date) is still reachable.
+    //  • from/to (epoch ms) — narrow the list to a start_timestamp window via
+    //    Retell's filter_criteria, still capped at one 1000-call page.
+    const callIdParam = searchParams.get("call_id")?.trim();
+    const fromParam = Number(searchParams.get("from"));
+    const toParam = Number(searchParams.get("to"));
+    const rangeFilter =
+      Number.isFinite(fromParam) && Number.isFinite(toParam)
+        ? { start_timestamp: { lower_threshold: fromParam, upper_threshold: toParam } }
+        : undefined;
+
     // Kick off the agent-name lookup in parallel with paging through calls.
     const agentsPromise = listAgents(apiKey).catch(() => [] as RetellAgent[]);
 
-    // Retell caps a single list-calls request at 1000, so page through it
-    // (newest first) until we reach the target or run out of calls.
-    const PER_REQUEST = 1000;
     const callList: Array<Record<string, unknown>> = [];
-    let cursor = searchParams.get("pagination_key") || undefined;
-    while (callList.length < target) {
-      const batch = (await listCalls(
-        {
-          limit: Math.min(PER_REQUEST, target - callList.length),
-          pagination_key: cursor,
-        },
-        apiKey
-      )) as Array<Record<string, unknown>>;
-      if (batch.length === 0) break;
-      callList.push(...batch);
-      if (batch.length < PER_REQUEST) break; // No more pages.
-      cursor = String(batch[batch.length - 1].call_id);
+    if (callIdParam) {
+      // Direct lookup — a single call (empty list if Retell 404s). The shared
+      // enrichment below still attaches agent name / grades / logs.
+      const one = await getCall(callIdParam, apiKey).catch(() => null);
+      if (one) callList.push(one as Record<string, unknown>);
+    } else {
+      // Recent window, or a date-range window when from/to are set. Retell caps
+      // a single list-calls request at 1000, so page through it (newest first)
+      // until we reach the target or run out of calls.
+      const PER_REQUEST = 1000;
+      let cursor = searchParams.get("pagination_key") || undefined;
+      while (callList.length < target) {
+        const batch = (await listCalls(
+          {
+            limit: Math.min(PER_REQUEST, target - callList.length),
+            pagination_key: cursor,
+            ...(rangeFilter ? { filter_criteria: rangeFilter } : {}),
+          },
+          apiKey
+        )) as Array<Record<string, unknown>>;
+        if (batch.length === 0) break;
+        callList.push(...batch);
+        if (batch.length < PER_REQUEST) break; // No more pages.
+        cursor = String(batch[batch.length - 1].call_id);
+      }
     }
 
     const agents = await agentsPromise;
