@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { WORKSPACES, type Workspace } from "@/lib/workspace";
+import { DASHBOARD_WORKSPACES, type Workspace } from "@/lib/workspace";
 import { retellKeyForWorkspace } from "@/lib/workspaceServer";
 import {
   isCronAuthorized,
@@ -64,11 +64,13 @@ async function handle(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Only workspaces with a live dashboard are ticked — outbound / speed-to-lead
+  // have no dashboard set up yet, so nothing is ingested or graded for them.
   // Workspaces share no state, so run them concurrently — the tick's wall time
   // is one workspace's work, not the sum. Each stamps its tick time first so the
   // dashboard's "last run" reflects every invocation, even a paused/errored one.
   const ticks = await Promise.all(
-    WORKSPACES.map(async (workspace): Promise<WorkspaceTick> => {
+    DASHBOARD_WORKSPACES.map(async (workspace): Promise<WorkspaceTick> => {
       await recordTick(workspace);
       try {
         return await tickWorkspace(workspace);

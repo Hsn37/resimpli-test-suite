@@ -10,10 +10,18 @@ import {
 } from "react";
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
-import { FlaskConical, Loader2, Rocket } from "lucide-react";
+import {
+  ChevronDown,
+  FlaskConical,
+  Loader2,
+  PhoneIncoming,
+  PhoneOutgoing,
+  Zap,
+} from "lucide-react";
 import {
   DEFAULT_WORKSPACE,
   WORKSPACE_COOKIE,
+  WORKSPACE_META,
   WORKSPACES,
   isWorkspace,
   type Workspace,
@@ -110,16 +118,16 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-const WORKSPACE_META: Record<
-  Workspace,
-  { label: string; blurb: string; icon: typeof Rocket }
-> = {
-  prod: { label: "Prod", blurb: "Live production data", icon: Rocket },
-  dev: { label: "Dev", blurb: "Development sandbox", icon: FlaskConical },
+// Icons only — labels/blurbs live in @/lib/workspace so server code shares them.
+const WORKSPACE_ICONS: Record<Workspace, typeof FlaskConical> = {
+  dev: FlaskConical,
+  prod: PhoneIncoming,
+  outbound: PhoneOutgoing,
+  stl: Zap,
 };
 
-// Centered two-button chooser shown to admins on first load. Zinc/blue theme
-// to match the rest of the app.
+// Centered chooser shown to admins on first load. Zinc/blue theme to match the
+// rest of the app.
 function WorkspaceChooser({ onPick }: { onPick: (w: Workspace) => void }) {
   return (
     <div className="flex flex-1 items-center justify-center p-8">
@@ -131,7 +139,7 @@ function WorkspaceChooser({ onPick }: { onPick: (w: Workspace) => void }) {
         <div className="grid grid-cols-2 gap-4">
           {WORKSPACES.map((w) => {
             const meta = WORKSPACE_META[w];
-            const Icon = meta.icon;
+            const Icon = WORKSPACE_ICONS[w];
             return (
               <button
                 key={w}
@@ -153,43 +161,58 @@ function WorkspaceChooser({ onPick }: { onPick: (w: Workspace) => void }) {
 }
 
 /**
- * Compact workspace switcher for the sidebar. Renders nothing for non-admins,
- * so the control (and the workspace concept) stays invisible to them.
+ * Workspace switcher for the sidebar (and, compact, the mobile top bar).
+ * Renders nothing for non-admins, so the control (and the workspace concept)
+ * stays invisible to them.
+ *
+ * A transparent native <select> covers the styled trigger: one control serves
+ * both variants and gives the four workspaces a real menu (and the platform
+ * picker on mobile) instead of a click-to-cycle toggle.
  */
 export function WorkspaceSwitcher({ compact = false }: { compact?: boolean }) {
   const { workspace, setWorkspace, isAdmin, isSwitching } = useWorkspace();
   if (!isAdmin) return null;
 
   const meta = WORKSPACE_META[workspace];
-  const Icon = meta.icon;
-  const next: Workspace = workspace === "prod" ? "dev" : "prod";
-
-  if (compact) {
-    return (
-      <button
-        onClick={() => setWorkspace(next)}
-        disabled={isSwitching}
-        title={`Workspace: ${meta.label} — click to switch to ${WORKSPACE_META[next].label}`}
-        className="text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-      >
-        {isSwitching ? <Loader2 size={16} className="animate-spin" /> : <Icon size={16} />}
-      </button>
-    );
-  }
+  const Icon = WORKSPACE_ICONS[workspace];
+  const iconSize = compact ? 16 : 13;
+  const accent = "text-blue-600 dark:text-blue-400";
 
   return (
-    <button
-      onClick={() => setWorkspace(next)}
-      disabled={isSwitching}
-      title={`Switch to ${WORKSPACE_META[next].label}`}
-      className="flex items-center gap-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 px-2 py-1 text-xs font-medium hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+    <div
+      title={`Workspace: ${meta.label}`}
+      className={`relative items-center ${
+        compact
+          ? "inline-flex text-zinc-400"
+          : "flex gap-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 px-2 py-1 text-xs font-medium hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+      } ${isSwitching ? "opacity-60" : ""}`}
     >
       {isSwitching ? (
-        <Loader2 size={13} className="animate-spin text-blue-600 dark:text-blue-400" />
+        <Loader2 size={iconSize} className={`animate-spin ${accent}`} />
       ) : (
-        <Icon size={13} className="text-blue-600 dark:text-blue-400" />
+        <Icon size={iconSize} className={compact ? undefined : accent} />
       )}
-      {meta.label}
-    </button>
+      {!compact && (
+        <>
+          {meta.label}
+          <ChevronDown size={12} className="text-zinc-400" />
+        </>
+      )}
+      <select
+        aria-label="Workspace"
+        value={workspace}
+        disabled={isSwitching}
+        onChange={(e) => {
+          if (isWorkspace(e.target.value)) setWorkspace(e.target.value);
+        }}
+        className="absolute inset-0 w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+      >
+        {WORKSPACES.map((w) => (
+          <option key={w} value={w}>
+            {WORKSPACE_META[w].label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }

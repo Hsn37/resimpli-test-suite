@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, Database, Download, Loader2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, Construction, Database, Download, Loader2 } from "lucide-react";
 import { ToastProvider, useToast } from "@/components/Toast";
+import { useWorkspace } from "@/components/WorkspaceProvider";
 import Skeleton from "@/components/Skeleton";
 import TrendsChart from "./TrendsChart";
 import CallsTable, { type CallRowData } from "@/components/CallsTable";
 import CallViewer from "@/components/CallViewer";
 import IngestionTriggers from "@/components/IngestionTriggers";
 import AutomationStats from "@/components/AutomationStats";
+import { WORKSPACE_META } from "@/lib/workspace";
 import { humanAiNote, isViolated, type CallRowGrade } from "@/lib/callGrade";
 import { downloadJson } from "@/lib/downloadRecording";
 import {
@@ -857,11 +859,28 @@ function VoiceBreakdown({ calls }: { calls: DashCall[] }) {
   );
 }
 
+// Outbound / Speed to Lead run in the same app but have no call-grader
+// dashboard wired up yet — say so instead of rendering empty charts.
+function DashboardNotSetUp({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-24">
+      <Construction size={40} className="text-zinc-300 dark:text-zinc-700 mb-4" />
+      <h1 className="text-lg font-semibold">{label} dashboard not set up yet</h1>
+      <p className="text-sm text-zinc-500 mt-1 max-w-sm">
+        This workspace has no dashboard yet. Test Call, Calls, Batch Tests and
+        Admin work as usual.
+      </p>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
+  const { workspace } = useWorkspace();
+  const meta = WORKSPACE_META[workspace];
   return (
     <ToastProvider>
       <div className="p-6 md:p-8">
-        <DashboardContent />
+        {meta.hasDashboard ? <DashboardContent /> : <DashboardNotSetUp label={meta.label} />}
       </div>
     </ToastProvider>
   );

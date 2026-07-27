@@ -6,6 +6,7 @@ import { Loader2, Shield } from "lucide-react";
 import Link from "next/link";
 import { ToastProvider } from "@/components/Toast";
 import { useWorkspace } from "@/components/WorkspaceProvider";
+import { WORKSPACE_META } from "@/lib/workspace";
 import UsersTab from "@/components/admin/UsersTab";
 import AgentsTab from "@/components/admin/AgentsTab";
 import RubricTab from "@/components/admin/RubricTab";
@@ -94,7 +95,7 @@ function AdminContent() {
           <p className="text-xs text-zinc-500 mt-0.5">
             Editing workspace:{" "}
             <span className="font-medium text-blue-600 dark:text-blue-400 uppercase">
-              {workspace}
+              {WORKSPACE_META[workspace].label}
             </span>
           </p>
         </div>
