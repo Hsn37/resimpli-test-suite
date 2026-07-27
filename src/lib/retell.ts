@@ -1,7 +1,7 @@
 const RETELL_BASE_URL = "https://api.retellai.com";
 
 // Every request requires an explicit key. Resolve it per workspace via
-// retellKeyForWorkspace (RETELL_DEV_KEY / RETELL_PROD_KEY) — there is no shared
+// retellKeyForWorkspace (one RETELL_*_KEY per workspace) — there is no shared
 // RETELL_API_KEY fallback, so a workspace can never silently borrow another
 // workspace's account (e.g. prod falling back to the dev key).
 function headers(apiKey: string): HeadersInit {

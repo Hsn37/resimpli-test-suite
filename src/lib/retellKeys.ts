@@ -13,9 +13,12 @@ import type { Workspace } from "./workspace";
 // Per-workspace Retell keys. Each workspace MUST have its own key — there is no
 // shared fallback, so a workspace can never silently borrow another's account
 // (e.g. prod falling back to a RETELL_API_KEY that holds the dev key).
+// The "prod" workspace is the inbound production account, hence RETELL_INBOUND_KEY.
 const RETELL_KEY_ENV: Record<Workspace, string> = {
-  prod: "RETELL_PROD_KEY",
   dev: "RETELL_DEV_KEY",
+  prod: "RETELL_INBOUND_KEY",
+  outbound: "RETELL_OUTBOUND_KEY",
+  stl: "RETELL_STL_KEY",
 };
 
 /**
