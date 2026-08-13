@@ -173,11 +173,24 @@ function ensureSchema(): Promise<void> {
           transcript        TEXT,
           dynamic_variables TEXT,
           recording_url     TEXT,
+          appointment_booked INTEGER,
           latency           TEXT,
           voice_id          TEXT,
           voice_name        TEXT,
           raw_payload       TEXT,
           created_at        INTEGER
+        )`
+      ),
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS weekly_call_reviews (
+          workspace             TEXT NOT NULL,
+          week_start            INTEGER NOT NULL,
+          week_end              INTEGER NOT NULL,
+          candidate_fingerprint TEXT NOT NULL,
+          result                TEXT NOT NULL,
+          model                 TEXT,
+          generated_at          INTEGER NOT NULL,
+          PRIMARY KEY (workspace, week_start)
         )`
       ),
       db.execute(
@@ -242,6 +255,37 @@ function ensureSchema(): Promise<void> {
         )`
       ),
     ]);
+    // Added after the initial call-grader schema. Nullable preserves the
+    // distinction between an explicit false and post-call analysis not having
+    // arrived yet. Run this before creating its index on an existing database.
+    try {
+      await db.execute(`ALTER TABLE calls ADD COLUMN appointment_booked INTEGER`);
+    } catch {
+      // Column already exists.
+    }
+    // Recover the flag for already-ingested analyzed calls when the Retell
+    // payload is still present. Covers webhook/backfill wrappers and a direct
+    // get-call payload; unrecognized/missing values remain null.
+    await db.execute(
+      `UPDATE calls
+          SET appointment_booked = CASE LOWER(CAST(COALESCE(
+                json_extract(raw_payload, '$.call.call_analysis.custom_analysis_data.appointment_booked'),
+                json_extract(raw_payload, '$.call.call_analysis.appointment_booked'),
+                json_extract(raw_payload, '$.data.call_analysis.custom_analysis_data.appointment_booked'),
+                json_extract(raw_payload, '$.call_analysis.custom_analysis_data.appointment_booked'),
+                json_extract(raw_payload, '$.call_analysis.appointment_booked'),
+                json_extract(raw_payload, '$.appointment_booked')
+              ) AS TEXT))
+              WHEN 'true' THEN 1
+              WHEN '1' THEN 1
+              WHEN 'false' THEN 0
+              WHEN '0' THEN 0
+              ELSE NULL
+            END
+        WHERE appointment_booked IS NULL
+          AND raw_payload IS NOT NULL
+          AND json_valid(raw_payload)`
+    );
     await Promise.all([
       // retell_call_id is unique per workspace (Lovable had a global UNIQUE).
       db.execute(
@@ -263,6 +307,10 @@ function ensureSchema(): Promise<void> {
       db.execute(
         `CREATE INDEX IF NOT EXISTS calls_workspace_voice_name
          ON calls (workspace, voice_name)`
+      ),
+      db.execute(
+        `CREATE INDEX IF NOT EXISTS calls_workspace_appointment_timestamp
+         ON calls (workspace, appointment_booked, timestamp DESC)`
       ),
       db.execute(
         `CREATE INDEX IF NOT EXISTS call_grades_workspace_grade
@@ -967,6 +1015,7 @@ export interface Call {
   transcript: unknown;
   dynamic_variables: Record<string, unknown> | null;
   recording_url: string | null;
+  appointment_booked: boolean | null;
   latency: unknown;
   voice_id: string | null;
   voice_name: string | null;
@@ -985,6 +1034,7 @@ export interface UpsertCallInput {
   transcript?: unknown;
   dynamicVariables?: Record<string, unknown> | null;
   recordingUrl?: string | null;
+  appointmentBooked?: boolean | null;
   latency?: unknown;
   voiceId?: string | null;
   voiceName?: string | null;
@@ -1008,6 +1058,8 @@ function rowToCall(row: Record<string, unknown>): Call {
       null
     ),
     recording_url: (row.recording_url as string) ?? null,
+    appointment_booked:
+      row.appointment_booked == null ? null : Number(row.appointment_booked) !== 0,
     latency: parseJson<unknown>(row.latency, null),
     voice_id: (row.voice_id as string) ?? null,
     voice_name: (row.voice_name as string) ?? null,
@@ -1033,8 +1085,9 @@ export async function upsertCall(input: UpsertCallInput): Promise<string> {
     sql: `INSERT INTO calls
             (id, workspace, retell_call_id, agent_id, agent_version, timestamp,
              duration_seconds, phone_number, transcript, dynamic_variables,
-             recording_url, latency, voice_id, voice_name, raw_payload, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             recording_url, appointment_booked, latency, voice_id, voice_name,
+             raw_payload, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(workspace, retell_call_id) DO UPDATE SET
             agent_id          = excluded.agent_id,
             agent_version     = excluded.agent_version,
@@ -1044,6 +1097,7 @@ export async function upsertCall(input: UpsertCallInput): Promise<string> {
             transcript        = excluded.transcript,
             dynamic_variables = excluded.dynamic_variables,
             recording_url     = excluded.recording_url,
+            appointment_booked = COALESCE(excluded.appointment_booked, calls.appointment_booked),
             latency           = excluded.latency,
             voice_id          = excluded.voice_id,
             voice_name        = excluded.voice_name,
@@ -1060,6 +1114,7 @@ export async function upsertCall(input: UpsertCallInput): Promise<string> {
       input.transcript === undefined ? null : JSON.stringify(input.transcript ?? null),
       input.dynamicVariables === undefined ? null : JSON.stringify(input.dynamicVariables ?? null),
       input.recordingUrl ?? null,
+      input.appointmentBooked == null ? null : input.appointmentBooked ? 1 : 0,
       input.latency === undefined ? null : JSON.stringify(input.latency ?? null),
       input.voiceId ?? null,
       input.voiceName ?? null,
@@ -1273,6 +1328,7 @@ export interface DashboardCall {
   voice_id: string | null;
   voice_name: string | null;
   recording_url: string | null;
+  appointment_booked: boolean | null;
   call_grades: {
     grade: number | null;
     applicable_count: number;
@@ -1330,7 +1386,8 @@ export async function listDashboardCallsInRange(
   const result = await db.execute({
     sql: `SELECT c.id, c.retell_call_id, c.timestamp, c.duration_seconds,
                  c.phone_number, c.agent_version, c.voice_id, c.voice_name,
-                 c.recording_url, av.agent_name AS agent_name,
+                 c.recording_url, c.appointment_booked,
+                 av.agent_name AS agent_name,
                  g.call_id AS g_call_id, g.grade AS g_grade,
                  g.applicable_count AS g_applicable_count,
                  g.passed_count AS g_passed_count, g.results AS g_results,
@@ -1360,6 +1417,8 @@ export async function listDashboardCallsInRange(
       voice_id: (row.voice_id as string) ?? null,
       voice_name: (row.voice_name as string) ?? null,
       recording_url: (row.recording_url as string) ?? null,
+      appointment_booked:
+        row.appointment_booked == null ? null : Number(row.appointment_booked) !== 0,
       call_grades: rowToDashboardGrade(row),
     };
   });
@@ -1452,6 +1511,7 @@ export async function getDashboardCallDetail(
     voice_id: call.voice_id,
     voice_name: call.voice_name,
     recording_url: call.recording_url,
+    appointment_booked: call.appointment_booked,
     transcript: call.transcript,
     dynamic_variables: call.dynamic_variables,
     call_grades: grade
@@ -1470,6 +1530,71 @@ export async function getDashboardCallDetail(
         }
       : null,
   };
+}
+
+export interface WeeklyCallReview<T = unknown> {
+  workspace: Workspace;
+  week_start: number;
+  week_end: number;
+  candidate_fingerprint: string;
+  result: T;
+  model: string | null;
+  generated_at: number;
+}
+
+/** Cached LLM ranking for one workspace/week. */
+export async function getWeeklyCallReview<T = unknown>(
+  workspace: Workspace,
+  weekStart: number
+): Promise<WeeklyCallReview<T> | null> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM weekly_call_reviews WHERE workspace = ? AND week_start = ?`,
+    args: [workspace, weekStart],
+  });
+  if (result.rows.length === 0) return null;
+  const row = result.rows[0] as unknown as Record<string, unknown>;
+  return {
+    workspace,
+    week_start: Number(row.week_start),
+    week_end: Number(row.week_end),
+    candidate_fingerprint: String(row.candidate_fingerprint),
+    result: parseJson<T>(row.result, {} as T),
+    model: (row.model as string) ?? null,
+    generated_at: Number(row.generated_at),
+  };
+}
+
+/** Store or replace the recommendation after the qualified shortlist changes. */
+export async function upsertWeeklyCallReview<T>(input: {
+  workspace: Workspace;
+  weekStart: number;
+  weekEnd: number;
+  candidateFingerprint: string;
+  result: T;
+  model: string;
+}): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `INSERT INTO weekly_call_reviews
+            (workspace, week_start, week_end, candidate_fingerprint, result, model, generated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(workspace, week_start) DO UPDATE SET
+            week_end = excluded.week_end,
+            candidate_fingerprint = excluded.candidate_fingerprint,
+            result = excluded.result,
+            model = excluded.model,
+            generated_at = excluded.generated_at`,
+    args: [
+      input.workspace,
+      input.weekStart,
+      input.weekEnd,
+      input.candidateFingerprint,
+      JSON.stringify(input.result),
+      input.model,
+      Date.now(),
+    ],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1811,4 +1936,3 @@ export async function countGradeableUngraded(
   });
   return Number(result.rows[0]?.n ?? 0);
 }
-

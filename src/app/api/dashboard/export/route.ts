@@ -36,6 +36,7 @@ export async function POST(request: Request) {
         voice_name: call.voice_name,
         phone_number: call.phone_number,
         recording_url: call.recording_url,
+        appointment_booked: call.appointment_booked,
         transcript: call.transcript,
         dynamic_variables: call.dynamic_variables,
         grading: g

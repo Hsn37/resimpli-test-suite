@@ -42,6 +42,11 @@ export const FALLBACK_CYCLE_ANCHOR = new Date(
 export const CYCLE_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CYCLE_MS = CYCLE_DAYS * DAY_MS;
+// Dashboard labels are rendered during SSR and then hydrated in the browser.
+// Never use the runtime-default locale here: a server using en-GB ("7 Aug")
+// and a browser using en-US ("Aug 7") produce different HTML and trigger a
+// hydration recovery. Keep the display locale explicit across both runtimes.
+export const DASHBOARD_DISPLAY_LOCALE = "en-US";
 
 export interface Cycle {
   index: number; // 0 = first cycle starting at anchor
@@ -87,13 +92,16 @@ export function currentCycle(anchor: Date = FALLBACK_CYCLE_ANCHOR): Cycle {
 // ---------------------------------------------------------------------------
 
 export function fmtDate(d: Date): string {
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return d.toLocaleDateString(DASHBOARD_DISPLAY_LOCALE, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 /** Format a timestamp (Date | ISO string | epoch ms) as "Mon d, h:mm AM". */
 export function fmtDateTime(d: Date | string | number): string {
   const date = d instanceof Date ? d : new Date(d);
-  return date.toLocaleString(undefined, {
+  return date.toLocaleString(DASHBOARD_DISPLAY_LOCALE, {
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -187,6 +195,7 @@ export interface DashCall {
   voice_id: string | null;
   voice_name: string | null;
   recording_url: string | null;
+  appointment_booked: boolean | null;
   call_grades: DashCallGrade | null;
 }
 
@@ -295,9 +304,9 @@ export function periodNext(d: Date, g: Granularity): Date {
 }
 
 export function periodLabel(d: Date, g: Granularity): string {
-  if (g === "day") return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (g === "day") return d.toLocaleDateString(DASHBOARD_DISPLAY_LOCALE, { month: "short", day: "numeric" });
   if (g === "week") return `Wk ${fmtDate(d)}`;
-  if (g === "month") return d.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+  if (g === "month") return d.toLocaleDateString(DASHBOARD_DISPLAY_LOCALE, { month: "short", year: "2-digit" });
   const q = Math.floor(d.getMonth() / 3) + 1;
   return `Q${q} ${String(d.getFullYear()).slice(2)}`;
 }

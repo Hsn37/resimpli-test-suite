@@ -10,6 +10,7 @@ import CallsTable, { type CallRowData } from "@/components/CallsTable";
 import CallViewer from "@/components/CallViewer";
 import IngestionTriggers from "@/components/IngestionTriggers";
 import AutomationStats from "@/components/AutomationStats";
+import CallOfWeekPanel from "@/components/CallOfWeekPanel";
 import { WORKSPACE_META } from "@/lib/workspace";
 import { humanAiNote, isViolated, type CallRowGrade } from "@/lib/callGrade";
 import { downloadJson } from "@/lib/downloadRecording";
@@ -459,6 +460,12 @@ function DashboardContent() {
 
       {/* Automation stats (admin-only) — sits right under the backfill section. */}
       {isAdmin && <AutomationStats />}
+
+      <CallOfWeekPanel
+        from={cycle.start}
+        to={cycle.end}
+        onViewDetails={(callId) => setViewingCallId(callId)}
+      />
 
       {/* Filters */}
       <div className={CARD}>
