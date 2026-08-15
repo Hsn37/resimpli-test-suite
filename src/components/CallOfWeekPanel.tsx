@@ -39,10 +39,14 @@ interface PanelData {
 export default function CallOfWeekPanel({
   from,
   to,
+  isAdmin,
   onViewDetails,
 }: {
   from: Date;
   to: Date;
+  // Ranking is admin-only server-side; this only hides the trigger. Everyone
+  // can still read an already-generated recommendation.
+  isAdmin: boolean;
   onViewDetails: (callId: string) => void;
 }) {
   const [data, setData] = useState<PanelData | null>(null);
@@ -122,7 +126,7 @@ export default function CallOfWeekPanel({
               {fmtDate(from)} – {fmtDate(weekEndInclusive)} · Booked appointments with strong QA scores
             </p>
           </div>
-          {data?.review ? (
+          {data?.review && isAdmin ? (
             <button
               onClick={() => runRanking(true)}
               disabled={ranking}
@@ -167,17 +171,21 @@ export default function CallOfWeekPanel({
               <div>
                 <div className="text-sm font-medium">{data.shortlist.length} qualified calls are ready</div>
                 <p className="text-xs text-zinc-500 mt-1">
-                  The LLM will compare marketing value and return up to five finalists.
+                  {isAdmin
+                    ? "The LLM will compare marketing value and return up to five finalists."
+                    : "An admin can run the ranking to pick this week's finalists."}
                 </p>
               </div>
-              <button
-                onClick={() => runRanking(false)}
-                disabled={ranking}
-                className="flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 text-sm font-medium disabled:opacity-50"
-              >
-                {ranking ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                {ranking ? "Ranking calls…" : "Pick the finalists"}
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => runRanking(false)}
+                  disabled={ranking}
+                  className="flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+                >
+                  {ranking ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                  {ranking ? "Ranking calls…" : "Pick the finalists"}
+                </button>
+              )}
             </div>
           ) : (
             <>

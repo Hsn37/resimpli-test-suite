@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { requireAdmin } from "@/lib/admin";
 import {
   getAppConfig,
-  getDashboardCallDetail,
+  getCallTranscriptsByIds,
   getWeeklyCallReview,
   listDashboardCallsInRange,
   upsertWeeklyCallReview,
@@ -13,12 +14,12 @@ import {
   buildCallOfWeekPool,
   rankCallOfWeekCandidates,
   CALL_OF_WEEK_SHORTLIST_LIMIT,
-  type CallOfWeekCandidate,
 } from "@/lib/callOfWeek";
 import {
   CALL_OF_WEEK_MAX_FINALISTS,
   callOfWeekFingerprint,
   judgeCallOfWeek,
+  selectFinalists,
   type CallOfWeekFinalist,
   type CallOfWeekRecommendation,
 } from "@/lib/callOfWeekJudge";
@@ -105,8 +106,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Ranking spends OpenAI credits and `force` bypasses the cache, so this
+  // matches the other spend-triggering routes (backfill, grade-pending).
+  const admin = await requireAdmin();
+  if (!admin.ok) {
+    return NextResponse.json({ error: admin.error }, { status: admin.status });
+  }
 
   const loaded = await loadPool(request);
   if (!loaded) {
@@ -139,6 +144,9 @@ export async function POST(request: Request) {
     const evaluatedCallIds: string[] = [];
     const summaries: string[] = [];
     const seenFinalists = new Set<string>();
+    // Each batch nominates its own winner; the merge below picks between them
+    // instead of silently discarding every nomination.
+    const batchWinners: string[] = [];
 
     for (
       let batchIndex = 0;
@@ -153,20 +161,19 @@ export async function POST(request: Request) {
       );
       if (batch.length === 0) break;
 
-      const details = await Promise.all(
-        batch.map(async (candidate) => ({
+      // One query per batch instead of three per candidate. Fetching per batch
+      // (not for every candidate up front) keeps refill batches from reading
+      // transcripts the judge may never see.
+      const transcripts = await getCallTranscriptsByIds(
+        loaded.workspace,
+        batch.map((candidate) => candidate.id)
+      );
+      const judgeCandidates = batch
+        .filter((candidate) => transcripts.has(candidate.id))
+        .map((candidate) => ({
           candidate,
-          detail: await getDashboardCallDetail(loaded.workspace, candidate.id),
-        }))
-      );
-      const judgeCandidates = details.filter(
-        (
-          row
-        ): row is {
-          candidate: CallOfWeekCandidate;
-          detail: NonNullable<typeof row.detail>;
-        } => row.detail != null
-      );
+          transcript: transcripts.get(candidate.id),
+        }));
       if (judgeCandidates.length === 0) continue;
 
       const batchReview = await judgeCallOfWeek({
@@ -176,6 +183,7 @@ export async function POST(request: Request) {
       });
       evaluatedCallIds.push(...batchReview.evaluated_call_ids);
       if (batchReview.summary) summaries.push(batchReview.summary);
+      if (batchReview.winner_call_id) batchWinners.push(batchReview.winner_call_id);
       for (const finalist of batchReview.finalists) {
         if (seenFinalists.has(finalist.call_id)) continue;
         seenFinalists.add(finalist.call_id);
@@ -183,14 +191,13 @@ export async function POST(request: Request) {
       }
     }
 
-    finalists.sort((a, b) => b.marketing_score - a.marketing_score);
-    const selectedFinalists = finalists.slice(0, CALL_OF_WEEK_MAX_FINALISTS);
+    const selected = selectFinalists(finalists, batchWinners);
     const recommendation: CallOfWeekRecommendation = {
-      winner_call_id: selectedFinalists[0]?.call_id ?? "",
+      winner_call_id: selected.winnerCallId,
       summary:
         summaries.join(" ").slice(0, 800) ||
         "No call had both a verified appointment and sufficient marketing value.",
-      finalists: selectedFinalists,
+      finalists: selected.finalists,
       evaluated_call_ids: Array.from(new Set(evaluatedCallIds)),
     };
 

@@ -2,7 +2,6 @@ import "server-only";
 
 import { createHash } from "crypto";
 import OpenAI from "openai";
-import type { DashboardCallDetail } from "./db";
 import type { CallOfWeekCandidate } from "./callOfWeek";
 
 const JUDGE_TEMPERATURE = 0.2;
@@ -34,9 +33,9 @@ export interface CallOfWeekRecommendation {
   evaluated_call_ids: string[];
 }
 
-interface CandidateWithDetail {
+interface CandidateWithTranscript {
   candidate: CallOfWeekCandidate;
-  detail: DashboardCallDetail;
+  transcript: unknown;
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -103,6 +102,31 @@ function boundedString(value: unknown, max = 600): string {
   return string.slice(0, max);
 }
 
+/**
+ * Rank by marketing score, keep the top finalists, then float the winner to the
+ * front so the UI's "#1" and the winner badge always agree.
+ *
+ * Cutting to the top N happens *after* sorting, so a high scorer the model
+ * happened to list late still survives. `preferredWinnerIds` are the judge's
+ * own nominations (one per batch); the highest-scoring nomination that survived
+ * the cut wins, and we fall back to the top scorer when none did.
+ */
+export function selectFinalists(
+  finalists: CallOfWeekFinalist[],
+  preferredWinnerIds: string[]
+): { finalists: CallOfWeekFinalist[]; winnerCallId: string } {
+  const ranked = [...finalists]
+    .sort((a, b) => b.marketing_score - a.marketing_score)
+    .slice(0, CALL_OF_WEEK_MAX_FINALISTS);
+  const preferred = new Set(preferredWinnerIds.filter(Boolean));
+  const winner = ranked.find((row) => preferred.has(row.call_id)) ?? ranked[0];
+  if (!winner) return { finalists: ranked, winnerCallId: "" };
+  return {
+    finalists: [winner, ...ranked.filter((row) => row.call_id !== winner.call_id)],
+    winnerCallId: winner.call_id,
+  };
+}
+
 function parseRecommendation(
   raw: Record<string, unknown>,
   candidates: CallOfWeekCandidate[]
@@ -161,37 +185,26 @@ function parseRecommendation(
       // The judge receives transcripts, not audio. Never imply otherwise.
       audio_review_required: true,
     });
-    if (finalists.length >= CALL_OF_WEEK_MAX_FINALISTS) break;
   }
 
-  finalists.sort((a, b) => b.marketing_score - a.marketing_score);
-  const requestedWinner = String(raw.winner_call_id ?? "");
-  const winnerCallId = finalists.some((row) => row.call_id === requestedWinner)
-    ? requestedWinner
-    : finalists[0]?.call_id ?? "";
-  finalists.sort((a, b) => {
-    if (a.call_id === winnerCallId) return -1;
-    if (b.call_id === winnerCallId) return 1;
-    return b.marketing_score - a.marketing_score;
-  });
-
+  const selected = selectFinalists(finalists, [String(raw.winner_call_id ?? "")]);
   return {
-    winner_call_id: winnerCallId,
+    winner_call_id: selected.winnerCallId,
     summary: boundedString(raw.summary, 800),
-    finalists,
+    finalists: selected.finalists,
     evaluated_call_ids: candidates.map((candidate) => candidate.retell_call_id),
   };
 }
 
 export async function judgeCallOfWeek(input: {
-  candidates: CandidateWithDetail[];
+  candidates: CandidateWithTranscript[];
   model: string;
   apiKey: string | undefined;
 }): Promise<CallOfWeekRecommendation> {
   if (!input.apiKey) throw new Error("OPENAI_API_KEY is not set");
   if (input.candidates.length === 0) throw new Error("No eligible calls to rank");
 
-  const payload = input.candidates.map(({ candidate, detail }) => ({
+  const payload = input.candidates.map(({ candidate, transcript }) => ({
     call_id: candidate.retell_call_id,
     duration_seconds: candidate.duration_seconds,
     qa: {
@@ -201,7 +214,7 @@ export async function judgeCallOfWeek(input: {
       booking_source: candidate.booking_source,
       booking_evidence: candidate.booking_evidence,
     },
-    transcript: transcriptForJudge(detail.transcript, candidate.duration_seconds),
+    transcript: transcriptForJudge(transcript, candidate.duration_seconds),
   }));
 
   const system = `You select a weekly phone call for a real-estate acquisitions company's marketing team.

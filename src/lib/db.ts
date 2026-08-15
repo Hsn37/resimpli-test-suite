@@ -1532,6 +1532,38 @@ export async function getDashboardCallDetail(
   };
 }
 
+/**
+ * Transcripts for many calls in one round-trip, keyed by internal call id.
+ * The weekly judge needs nothing but the transcript, so this replaces a
+ * per-candidate getDashboardCallDetail fan-out (3 queries each). Missing ids
+ * are simply absent from the map.
+ */
+export async function getCallTranscriptsByIds(
+  workspace: Workspace,
+  ids: string[]
+): Promise<Map<string, unknown>> {
+  const map = new Map<string, unknown>();
+  if (ids.length === 0) return map;
+
+  const db = await getDb();
+  // Chunk the IN (...) so a large window stays well under SQLite's bind-var cap.
+  const CHUNK = 200;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    const placeholders = batch.map(() => "?").join(", ");
+    const result = await db.execute({
+      sql: `SELECT id, transcript FROM calls
+            WHERE workspace = ? AND id IN (${placeholders})`,
+      args: [workspace, ...batch],
+    });
+    for (const row of result.rows) {
+      const record = row as unknown as Record<string, unknown>;
+      map.set(String(record.id), parseJson<unknown>(record.transcript, null));
+    }
+  }
+  return map;
+}
+
 export interface WeeklyCallReview<T = unknown> {
   workspace: Workspace;
   week_start: number;

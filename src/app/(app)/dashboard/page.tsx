@@ -464,6 +464,7 @@ function DashboardContent() {
       <CallOfWeekPanel
         from={cycle.start}
         to={cycle.end}
+        isAdmin={isAdmin}
         onViewDetails={(callId) => setViewingCallId(callId)}
       />
 
