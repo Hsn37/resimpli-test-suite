@@ -108,6 +108,49 @@ export function retellCallId(call: RetellCallPayload): string {
   return "";
 }
 
+/**
+ * Normalize the authoritative appointment flag produced by Retell post-call
+ * analysis. Retell custom fields normally live under
+ * call_analysis.custom_analysis_data, but tolerate the other shapes returned
+ * by older webhook/list-call payloads. Missing stays null; it must never be
+ * treated as a successful booking.
+ */
+export function extractAppointmentBooked(call: RetellCallPayload): boolean | null {
+  const analysis =
+    call.call_analysis && typeof call.call_analysis === "object"
+      ? (call.call_analysis as Record<string, unknown>)
+      : {};
+  const analysisCustom =
+    analysis.custom_analysis_data && typeof analysis.custom_analysis_data === "object"
+      ? (analysis.custom_analysis_data as Record<string, unknown>)
+      : {};
+  const postCall =
+    call.post_call_analysis_data && typeof call.post_call_analysis_data === "object"
+      ? (call.post_call_analysis_data as Record<string, unknown>)
+      : {};
+  const topLevelCustom =
+    call.custom_analysis_data && typeof call.custom_analysis_data === "object"
+      ? (call.custom_analysis_data as Record<string, unknown>)
+      : {};
+
+  const value =
+    analysisCustom.appointment_booked ??
+    analysis.appointment_booked ??
+    postCall.appointment_booked ??
+    topLevelCustom.appointment_booked ??
+    call.appointment_booked;
+
+  if (typeof value === "boolean") return value;
+  if (value === 1 || value === "1") return true;
+  if (value === 0 || value === "0") return false;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Skip rules — the single source of truth for who gets ingested. Returns a skip
 // reason string (counter key) when the call should be dropped, or null to keep.
@@ -307,6 +350,7 @@ export async function ingestCall(opts: {
       (call.dynamic_variables as Record<string, unknown>) ??
       {},
     recordingUrl: typeof call.recording_url === "string" ? call.recording_url : null,
+    appointmentBooked: extractAppointmentBooked(call),
     latency: call.latency ?? (call.call_analysis as Record<string, unknown>)?.latency ?? null,
     voiceId: voice_id,
     voiceName: voice_name,
