@@ -33,14 +33,16 @@ export const CALLS_WINDOW_LIMIT = 10000;
 export const EXPORT_BATCH = 100;
 
 // ---------------------------------------------------------------------------
-// 7-day cycle math (anchored at app_config.tracking_start_date)
+// Cycle math (anchored at app_config.tracking_start_date, snapped to a Monday)
 // ---------------------------------------------------------------------------
 
 export const FALLBACK_CYCLE_ANCHOR = new Date(
   `${DEFAULT_TRACKING_START_DATE}T00:00:00.000Z`
 );
-export const CYCLE_DAYS = 7;
-const DAY_MS = 24 * 60 * 60 * 1000;
+// Two weeks. Must stay a multiple of 7 or cycles stop starting on a Monday:
+// a 15-day cycle would begin Mon, then Tue, then Wed, and so on.
+export const CYCLE_DAYS = 14;
+export const DAY_MS = 24 * 60 * 60 * 1000;
 export const CYCLE_MS = CYCLE_DAYS * DAY_MS;
 // Dashboard labels are rendered during SSR and then hydrated in the browser.
 // Never use the runtime-default locale here: a server using en-GB ("7 Aug")
@@ -64,14 +66,26 @@ export function parseTrackingStart(v: unknown): Date {
   return FALLBACK_CYCLE_ANCHOR;
 }
 
+/**
+ * The Monday (UTC) on or before the anchor. Cycles are laid out from here so
+ * every cycle starts on a Monday whatever weekday tracking_start_date happens
+ * to be — that config value also gates ingestion, so it can't just be moved.
+ */
+export function cycleGridStart(anchor: Date = FALLBACK_CYCLE_ANCHOR): Date {
+  const start = new Date(anchor.getTime());
+  start.setUTCHours(0, 0, 0, 0);
+  start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+  return start;
+}
+
 export function cycleForDate(d: Date, anchor: Date = FALLBACK_CYCLE_ANCHOR): Cycle {
-  const diff = d.getTime() - anchor.getTime();
+  const diff = d.getTime() - cycleGridStart(anchor).getTime();
   const index = Math.max(0, Math.floor(diff / CYCLE_MS));
   return cycleByIndex(index, anchor);
 }
 
 export function cycleByIndex(index: number, anchor: Date = FALLBACK_CYCLE_ANCHOR): Cycle {
-  const start = new Date(anchor.getTime() + index * CYCLE_MS);
+  const start = new Date(cycleGridStart(anchor).getTime() + index * CYCLE_MS);
   const end = new Date(start.getTime() + CYCLE_MS);
   return {
     index,

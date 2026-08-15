@@ -9,7 +9,7 @@ import {
   upsertWeeklyCallReview,
 } from "@/lib/db";
 import { getServerWorkspace } from "@/lib/workspaceServer";
-import { CALLS_WINDOW_LIMIT } from "@/lib/dashboard";
+import { CALLS_WINDOW_LIMIT, CYCLE_MS, DAY_MS } from "@/lib/dashboard";
 import {
   buildCallOfWeekPool,
   rankCallOfWeekCandidates,
@@ -27,7 +27,9 @@ import { APP_CONFIG_KEYS, DEFAULT_GRADER_MODEL } from "@/lib/graderRubric";
 
 export const maxDuration = 120;
 
-const MAX_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
+// One cycle plus a day of slack at the edges. Derived from CYCLE_MS so widening
+// the cycle can't silently start 400-ing the panel's own range.
+const MAX_WINDOW_MS = CYCLE_MS + DAY_MS;
 // Refill at most two additional batches when legacy calls are rejected. This
 // bounds request time/cost while preventing a weak first batch from crowding out
 // later candidates.
