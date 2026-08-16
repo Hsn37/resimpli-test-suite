@@ -4,25 +4,25 @@ import { requireAdmin } from "@/lib/admin";
 import {
   getAppConfig,
   getCallTranscriptsByIds,
-  getWeeklyCallReview,
+  getCycleCallReview,
   listDashboardCallsInRange,
-  upsertWeeklyCallReview,
+  upsertCycleCallReview,
 } from "@/lib/db";
 import { getServerWorkspace } from "@/lib/workspaceServer";
 import { CALLS_WINDOW_LIMIT, CYCLE_MS, DAY_MS } from "@/lib/dashboard";
 import {
-  buildCallOfWeekPool,
-  rankCallOfWeekCandidates,
-  CALL_OF_WEEK_SHORTLIST_LIMIT,
-} from "@/lib/callOfWeek";
+  buildTopCallsPool,
+  rankTopCallsCandidates,
+  TOP_CALLS_SHORTLIST_LIMIT,
+} from "@/lib/topCalls";
 import {
-  CALL_OF_WEEK_MAX_FINALISTS,
-  callOfWeekFingerprint,
-  judgeCallOfWeek,
+  TOP_CALLS_MAX_FINALISTS,
+  topCallsFingerprint,
+  judgeTopCalls,
   selectFinalists,
-  type CallOfWeekFinalist,
-  type CallOfWeekRecommendation,
-} from "@/lib/callOfWeekJudge";
+  type TopCallsFinalist,
+  type TopCallsRecommendation,
+} from "@/lib/topCallsJudge";
 import { APP_CONFIG_KEYS, DEFAULT_GRADER_MODEL } from "@/lib/graderRubric";
 
 export const maxDuration = 120;
@@ -59,24 +59,24 @@ async function loadPool(request: Request) {
       (value) => value || DEFAULT_GRADER_MODEL
     ),
   ]);
-  const candidates = rankCallOfWeekCandidates(calls);
-  const pool = buildCallOfWeekPool(calls, candidates);
+  const candidates = rankTopCallsCandidates(calls);
+  const pool = buildTopCallsPool(calls, candidates);
   // Fingerprint the entire eligible queue—not only the first 20—because refill
   // batches can affect the finalists.
-  const fingerprint = callOfWeekFingerprint(candidates, model);
+  const fingerprint = topCallsFingerprint(candidates, model);
   return { workspace, window, calls, candidates, pool, fingerprint, model };
 }
 
 function poolForReview(
   loaded: NonNullable<Awaited<ReturnType<typeof loadPool>>>,
-  review: CallOfWeekRecommendation | null
+  review: TopCallsRecommendation | null
 ) {
   if (!review?.evaluated_call_ids?.length) return loaded.pool;
   const evaluated = new Set(review.evaluated_call_ids);
   const displayed = loaded.candidates.filter((candidate) =>
     evaluated.has(candidate.retell_call_id)
   );
-  return buildCallOfWeekPool(loaded.calls, loaded.candidates, displayed);
+  return buildTopCallsPool(loaded.calls, loaded.candidates, displayed);
 }
 
 export async function GET(request: Request) {
@@ -85,9 +85,9 @@ export async function GET(request: Request) {
 
   const loaded = await loadPool(request);
   if (!loaded) {
-    return NextResponse.json({ error: "A valid weekly from/to window is required" }, { status: 400 });
+    return NextResponse.json({ error: "A valid from/to cycle window is required" }, { status: 400 });
   }
-  const cached = await getWeeklyCallReview<CallOfWeekRecommendation>(
+  const cached = await getCycleCallReview<TopCallsRecommendation>(
     loaded.workspace,
     loaded.window.from
   );
@@ -117,16 +117,16 @@ export async function POST(request: Request) {
 
   const loaded = await loadPool(request);
   if (!loaded) {
-    return NextResponse.json({ error: "A valid weekly from/to window is required" }, { status: 400 });
+    return NextResponse.json({ error: "A valid from/to cycle window is required" }, { status: 400 });
   }
-  // An empty week is normal, not an unprocessable request. Keep GET/POST
+  // An empty cycle is normal, not an unprocessable request. Keep GET/POST
   // semantics consistent and let the UI render the funnel counts.
   if (loaded.candidates.length === 0) {
     return NextResponse.json({ ...loaded.pool, review: null });
   }
 
   const body = (await request.json().catch(() => ({}))) as { force?: unknown };
-  const cached = await getWeeklyCallReview<CallOfWeekRecommendation>(
+  const cached = await getCycleCallReview<TopCallsRecommendation>(
     loaded.workspace,
     loaded.window.from
   );
@@ -142,24 +142,25 @@ export async function POST(request: Request) {
   }
 
   try {
-    const finalists: CallOfWeekFinalist[] = [];
+    const finalists: TopCallsFinalist[] = [];
     const evaluatedCallIds: string[] = [];
     const summaries: string[] = [];
     const seenFinalists = new Set<string>();
-    // Each batch nominates its own winner; the merge below picks between them
-    // instead of silently discarding every nomination.
-    const batchWinners: string[] = [];
+    // Each batch nominates its own podium; the merge below picks between them
+    // instead of silently discarding every nomination. Earlier batches hold the
+    // stronger candidates, so their picks are considered first.
+    const batchNominations: string[] = [];
 
     for (
       let batchIndex = 0;
       batchIndex < MAX_JUDGE_BATCHES &&
-      finalists.length < CALL_OF_WEEK_MAX_FINALISTS;
+      finalists.length < TOP_CALLS_MAX_FINALISTS;
       batchIndex += 1
     ) {
-      const start = batchIndex * CALL_OF_WEEK_SHORTLIST_LIMIT;
+      const start = batchIndex * TOP_CALLS_SHORTLIST_LIMIT;
       const batch = loaded.candidates.slice(
         start,
-        start + CALL_OF_WEEK_SHORTLIST_LIMIT
+        start + TOP_CALLS_SHORTLIST_LIMIT
       );
       if (batch.length === 0) break;
 
@@ -178,14 +179,14 @@ export async function POST(request: Request) {
         }));
       if (judgeCandidates.length === 0) continue;
 
-      const batchReview = await judgeCallOfWeek({
+      const batchReview = await judgeTopCalls({
         candidates: judgeCandidates,
         model: loaded.model,
         apiKey: process.env.OPENAI_API_KEY,
       });
       evaluatedCallIds.push(...batchReview.evaluated_call_ids);
       if (batchReview.summary) summaries.push(batchReview.summary);
-      if (batchReview.winner_call_id) batchWinners.push(batchReview.winner_call_id);
+      batchNominations.push(...batchReview.podium_call_ids);
       for (const finalist of batchReview.finalists) {
         if (seenFinalists.has(finalist.call_id)) continue;
         seenFinalists.add(finalist.call_id);
@@ -193,9 +194,9 @@ export async function POST(request: Request) {
       }
     }
 
-    const selected = selectFinalists(finalists, batchWinners);
-    const recommendation: CallOfWeekRecommendation = {
-      winner_call_id: selected.winnerCallId,
+    const selected = selectFinalists(finalists, batchNominations);
+    const recommendation: TopCallsRecommendation = {
+      podium_call_ids: selected.podiumCallIds,
       summary:
         summaries.join(" ").slice(0, 800) ||
         "No call had both a verified appointment and sufficient marketing value.",
@@ -203,10 +204,10 @@ export async function POST(request: Request) {
       evaluated_call_ids: Array.from(new Set(evaluatedCallIds)),
     };
 
-    await upsertWeeklyCallReview({
+    await upsertCycleCallReview({
       workspace: loaded.workspace,
-      weekStart: loaded.window.from,
-      weekEnd: loaded.window.to,
+      cycleStart: loaded.window.from,
+      cycleEnd: loaded.window.to,
       candidateFingerprint: loaded.fingerprint,
       result: recommendation,
       model: loaded.model,
@@ -217,7 +218,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Call-of-the-week ranking failed" },
+      { error: error instanceof Error ? error.message : "Top-calls ranking failed" },
       { status: 500 }
     );
   }

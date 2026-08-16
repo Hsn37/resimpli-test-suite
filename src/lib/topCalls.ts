@@ -1,17 +1,17 @@
-// Pure shortlist policy for the weekly marketing-call workflow. New calls use
+// Pure shortlist policy for the top-calls marketing workflow. New calls use
 // Retell's authoritative appointment_booked flag. Historical calls with no flag
 // are tagged legacy_unverified and must be verified from the transcript by the
 // marketing judge before they can become finalists.
 
-export const CALL_OF_WEEK_SHORTLIST_LIMIT = 20;
-export const CALL_OF_WEEK_MIN_DURATION_SECONDS = 3 * 60;
-export const CALL_OF_WEEK_MIN_GRADE = 50;
-export const CALL_OF_WEEK_MIN_REP_SCORE = 70;
+export const TOP_CALLS_SHORTLIST_LIMIT = 20;
+export const TOP_CALLS_MIN_DURATION_SECONDS = 3 * 60;
+export const TOP_CALLS_MIN_GRADE = 50;
+export const TOP_CALLS_MIN_REP_SCORE = 70;
 
 // A call with one of these failures is a poor publishing candidate even when
 // its aggregate grade clears the broad floor. Specific gates are more stable
 // than treating the quantized failure-class ratio as the primary quality score.
-export const CALL_OF_WEEK_DISQUALIFYING_FAILURES = [
+export const TOP_CALLS_DISQUALIFYING_FAILURES = [
   "spoke_name_aloud",
   "steamrolled_caller",
   "false_completeness_claim",
@@ -20,7 +20,7 @@ export const CALL_OF_WEEK_DISQUALIFYING_FAILURES = [
 
 export type BookingEvidenceSource = "retell_analysis" | "legacy_unverified";
 
-export interface CallOfWeekCandidate {
+export interface TopCallsCandidate {
   id: string;
   retell_call_id: string;
   timestamp: number | null;
@@ -37,15 +37,15 @@ export interface CallOfWeekCandidate {
   disqualifying_failures: string[];
 }
 
-export interface CallOfWeekPool {
+export interface TopCallsPool {
   total_calls: number;
   reported_booked_calls: number;
   legacy_unverified_calls: number;
   eligible_calls: number;
-  shortlist: CallOfWeekCandidate[];
+  shortlist: TopCallsCandidate[];
 }
 
-interface WeeklyGradeInput {
+interface TopCallsGradeInput {
   grade: number | null;
   rep_score: number | null;
   ai_callout: boolean;
@@ -53,7 +53,7 @@ interface WeeklyGradeInput {
   rep_scorecard: Record<string, unknown>;
 }
 
-interface WeeklyCallInput {
+interface TopCallsCallInput {
   id: string;
   retell_call_id: string;
   timestamp: number | null;
@@ -63,7 +63,7 @@ interface WeeklyCallInput {
   voice_name: string | null;
   recording_url: string | null;
   appointment_booked: boolean | null;
-  call_grades: WeeklyGradeInput | null;
+  call_grades: TopCallsGradeInput | null;
 }
 
 function isViolated(value: unknown): boolean {
@@ -74,13 +74,13 @@ function isViolated(value: unknown): boolean {
   return typeof result.passed === "boolean" ? !result.passed : false;
 }
 
-function disqualifyingFailures(grade: WeeklyGradeInput): string[] {
-  return CALL_OF_WEEK_DISQUALIFYING_FAILURES.filter((key) =>
+function disqualifyingFailures(grade: TopCallsGradeInput): string[] {
+  return TOP_CALLS_DISQUALIFYING_FAILURES.filter((key) =>
     isViolated(grade.results?.[key])
   );
 }
 
-function bookingEvidence(call: WeeklyCallInput): {
+function bookingEvidence(call: TopCallsCallInput): {
   source: BookingEvidenceSource;
   evidence: string;
 } | null {
@@ -101,15 +101,15 @@ function bookingEvidence(call: WeeklyCallInput): {
   return null;
 }
 
-function toCandidate(call: WeeklyCallInput): CallOfWeekCandidate | null {
+function toCandidate(call: TopCallsCallInput): TopCallsCandidate | null {
   const grade = call.call_grades;
   const booking = bookingEvidence(call);
   if (!booking || !grade) return null;
   if (!call.recording_url) return null;
-  if ((call.duration_seconds ?? 0) < CALL_OF_WEEK_MIN_DURATION_SECONDS) return null;
+  if ((call.duration_seconds ?? 0) < TOP_CALLS_MIN_DURATION_SECONDS) return null;
   // Null means no configured failure class was applicable, not a failed call.
-  if (grade.grade != null && grade.grade < CALL_OF_WEEK_MIN_GRADE) return null;
-  if (grade.rep_score == null || grade.rep_score < CALL_OF_WEEK_MIN_REP_SCORE) return null;
+  if (grade.grade != null && grade.grade < TOP_CALLS_MIN_GRADE) return null;
+  if (grade.rep_score == null || grade.rep_score < TOP_CALLS_MIN_REP_SCORE) return null;
   if (grade.ai_callout) return null;
   const failures = disqualifyingFailures(grade);
   if (failures.length > 0) return null;
@@ -137,10 +137,10 @@ function toCandidate(call: WeeklyCallInput): CallOfWeekCandidate | null {
  * out by legacy calls. rep_score is already the mean of applicable dimensions,
  * so using it directly avoids double-counting rapport/control/outcome.
  */
-export function rankCallOfWeekCandidates(calls: WeeklyCallInput[]): CallOfWeekCandidate[] {
+export function rankTopCallsCandidates(calls: TopCallsCallInput[]): TopCallsCandidate[] {
   return calls
     .map(toCandidate)
-    .filter((candidate): candidate is CallOfWeekCandidate => candidate != null)
+    .filter((candidate): candidate is TopCallsCandidate => candidate != null)
     .sort(
       (a, b) =>
         Number(b.booking_source === "retell_analysis") -
@@ -152,14 +152,14 @@ export function rankCallOfWeekCandidates(calls: WeeklyCallInput[]): CallOfWeekCa
     );
 }
 
-export function buildCallOfWeekPool(
-  calls: WeeklyCallInput[],
-  rankedCandidates: CallOfWeekCandidate[] = rankCallOfWeekCandidates(calls),
-  displayedCandidates: CallOfWeekCandidate[] = rankedCandidates.slice(
+export function buildTopCallsPool(
+  calls: TopCallsCallInput[],
+  rankedCandidates: TopCallsCandidate[] = rankTopCallsCandidates(calls),
+  displayedCandidates: TopCallsCandidate[] = rankedCandidates.slice(
     0,
-    CALL_OF_WEEK_SHORTLIST_LIMIT
+    TOP_CALLS_SHORTLIST_LIMIT
   )
-): CallOfWeekPool {
+): TopCallsPool {
   const reportedBooked = calls.filter((call) => call.appointment_booked === true).length;
   const legacyUnverified = rankedCandidates.filter(
     (call) => call.booking_source === "legacy_unverified"

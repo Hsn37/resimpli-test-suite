@@ -2,17 +2,21 @@ import "server-only";
 
 import { createHash } from "crypto";
 import OpenAI from "openai";
-import type { CallOfWeekCandidate } from "./callOfWeek";
+import type { TopCallsCandidate } from "./topCalls";
 
 const JUDGE_TEMPERATURE = 0.2;
 const JUDGE_TIMEOUT_MS = 30_000;
 const MAX_TRANSCRIPT_CHARS = 7_000;
-export const CALL_OF_WEEK_MAX_FINALISTS = 5;
+export const TOP_CALLS_MAX_FINALISTS = 5;
+// How many finalists are promoted to the ranked recommendation. The rest stay
+// on the shortlist as runners-up.
+export const TOP_CALLS_PODIUM_SIZE = 3;
 // Increment whenever prompt semantics or output validation changes. Included in
 // the cache fingerprint so old recommendations cannot survive a judge update.
-export const CALL_OF_WEEK_JUDGE_VERSION = "3";
+// 4: single winner_call_id replaced by a ranked podium_call_ids.
+export const TOP_CALLS_JUDGE_VERSION = "4";
 
-export interface CallOfWeekFinalist {
+export interface TopCallsFinalist {
   call_id: string;
   marketing_score: number;
   reason: string;
@@ -26,15 +30,16 @@ export interface CallOfWeekFinalist {
   audio_review_required: true;
 }
 
-export interface CallOfWeekRecommendation {
-  winner_call_id: string;
+export interface TopCallsRecommendation {
+  /** Best-first, at most TOP_CALLS_PODIUM_SIZE. Mirrors finalists[0..2]. */
+  podium_call_ids: string[];
   summary: string;
-  finalists: CallOfWeekFinalist[];
+  finalists: TopCallsFinalist[];
   evaluated_call_ids: string[];
 }
 
 interface CandidateWithTranscript {
-  candidate: CallOfWeekCandidate;
+  candidate: TopCallsCandidate;
   transcript: unknown;
 }
 
@@ -72,8 +77,8 @@ function transcriptForJudge(transcript: unknown, durationSeconds: number): strin
   return `${rendered.slice(0, half)}\n[...middle shortened for ranking...]\n${rendered.slice(-half)}`;
 }
 
-export function callOfWeekFingerprint(
-  candidates: CallOfWeekCandidate[],
+export function topCallsFingerprint(
+  candidates: TopCallsCandidate[],
   model: string
 ): string {
   const stable = candidates.map((candidate) => ({
@@ -89,7 +94,7 @@ export function callOfWeekFingerprint(
   return createHash("sha256")
     .update(
       JSON.stringify({
-        judge_version: CALL_OF_WEEK_JUDGE_VERSION,
+        judge_version: TOP_CALLS_JUDGE_VERSION,
         model,
         candidates: stable,
       })
@@ -103,38 +108,50 @@ function boundedString(value: unknown, max = 600): string {
 }
 
 /**
- * Rank by marketing score, keep the top finalists, then float the winner to the
- * front so the UI's "#1" and the winner badge always agree.
+ * Rank by marketing score, keep the top finalists, then float the podium to the
+ * front so the UI's "#1/#2/#3" and the recommended badges always agree.
  *
  * Cutting to the top N happens *after* sorting, so a high scorer the model
- * happened to list late still survives. `preferredWinnerIds` are the judge's
- * own nominations (one per batch); the highest-scoring nomination that survived
- * the cut wins, and we fall back to the top scorer when none did.
+ * happened to list late still survives. `nominatedIds` are the judge's own
+ * picks in its preferred order (one run per batch); those that survived the cut
+ * lead the podium, and any remaining slots are filled by score.
  */
 export function selectFinalists(
-  finalists: CallOfWeekFinalist[],
-  preferredWinnerIds: string[]
-): { finalists: CallOfWeekFinalist[]; winnerCallId: string } {
+  finalists: TopCallsFinalist[],
+  nominatedIds: string[]
+): { finalists: TopCallsFinalist[]; podiumCallIds: string[] } {
   const ranked = [...finalists]
     .sort((a, b) => b.marketing_score - a.marketing_score)
-    .slice(0, CALL_OF_WEEK_MAX_FINALISTS);
-  const preferred = new Set(preferredWinnerIds.filter(Boolean));
-  const winner = ranked.find((row) => preferred.has(row.call_id)) ?? ranked[0];
-  if (!winner) return { finalists: ranked, winnerCallId: "" };
+    .slice(0, TOP_CALLS_MAX_FINALISTS);
+  const available = new Set(ranked.map((row) => row.call_id));
+  const podium: string[] = [];
+  for (const id of nominatedIds) {
+    if (podium.length >= TOP_CALLS_PODIUM_SIZE) break;
+    if (id && available.has(id) && !podium.includes(id)) podium.push(id);
+  }
+  // Backfill by score when the judge nominated too few, or too few survived.
+  for (const row of ranked) {
+    if (podium.length >= TOP_CALLS_PODIUM_SIZE) break;
+    if (!podium.includes(row.call_id)) podium.push(row.call_id);
+  }
+  const byId = new Map(ranked.map((row) => [row.call_id, row]));
   return {
-    finalists: [winner, ...ranked.filter((row) => row.call_id !== winner.call_id)],
-    winnerCallId: winner.call_id,
+    finalists: [
+      ...podium.map((id) => byId.get(id)!),
+      ...ranked.filter((row) => !podium.includes(row.call_id)),
+    ],
+    podiumCallIds: podium,
   };
 }
 
 function parseRecommendation(
   raw: Record<string, unknown>,
-  candidates: CallOfWeekCandidate[]
-): CallOfWeekRecommendation {
+  candidates: TopCallsCandidate[]
+): TopCallsRecommendation {
   const validIds = new Set(candidates.map((candidate) => candidate.retell_call_id));
   const candidateById = new Map(candidates.map((candidate) => [candidate.retell_call_id, candidate]));
   const seen = new Set<string>();
-  const finalists: CallOfWeekFinalist[] = [];
+  const finalists: TopCallsFinalist[] = [];
   const rows = Array.isArray(raw.finalists) ? raw.finalists : [];
 
   for (const value of rows) {
@@ -187,20 +204,23 @@ function parseRecommendation(
     });
   }
 
-  const selected = selectFinalists(finalists, [String(raw.winner_call_id ?? "")]);
+  const nominated = Array.isArray(raw.top_call_ids)
+    ? raw.top_call_ids.map((id) => String(id ?? ""))
+    : [];
+  const selected = selectFinalists(finalists, nominated);
   return {
-    winner_call_id: selected.winnerCallId,
+    podium_call_ids: selected.podiumCallIds,
     summary: boundedString(raw.summary, 800),
     finalists: selected.finalists,
     evaluated_call_ids: candidates.map((candidate) => candidate.retell_call_id),
   };
 }
 
-export async function judgeCallOfWeek(input: {
+export async function judgeTopCalls(input: {
   candidates: CandidateWithTranscript[];
   model: string;
   apiKey: string | undefined;
-}): Promise<CallOfWeekRecommendation> {
+}): Promise<TopCallsRecommendation> {
   if (!input.apiKey) throw new Error("OPENAI_API_KEY is not set");
   if (input.candidates.length === 0) throw new Error("No eligible calls to rank");
 
@@ -217,7 +237,7 @@ export async function judgeCallOfWeek(input: {
     transcript: transcriptForJudge(transcript, candidate.duration_seconds),
   }));
 
-  const system = `You select a weekly phone call for a real-estate acquisitions company's marketing team.
+  const system = `You select the best phone calls of the cycle for a real-estate acquisitions company's marketing team.
 
 Every candidate has already passed the recording, rep score >=70, no-caller-AI-suspicion, duration >=3-minute, and critical-failure gates. A non-null QA grade is >=50; QA grade can legitimately be null when no configured failure class was applicable.
 
@@ -231,7 +251,7 @@ You only receive transcripts, not recordings. Do not claim to have judged audio 
 
 Return ONLY JSON:
 {
-  "winner_call_id": "call_...",
+  "top_call_ids": ["call_best", "call_second", "call_third"],
   "summary": "short comparison summary",
   "finalists": [
     {
@@ -251,7 +271,9 @@ Return ONLY JSON:
 
 For every legacy_unverified finalist, booking_confirmed must be true, booking_confirmation_evidence must quote the transcript with turn references, and booking_confidence must be 0-1. Do not return that call at all unless confidence is at least 0.7. Retell-confirmed calls may use the supplied Retell evidence.
 
-Return up to five finalists in best-first order and use only supplied call IDs. It is valid to return an empty finalists array when no candidate is suitable.`;
+Return up to five finalists in best-first order and use only supplied call IDs. It is valid to return an empty finalists array when no candidate is suitable.
+
+"top_call_ids" is your ranked recommendation: the best three finalists, best first, drawn only from the finalists you returned. Return fewer than three when fewer are worth recommending, and an empty array when none are. The remaining finalists stand as runners-up.`;
 
   const client = new OpenAI({ apiKey: input.apiKey, maxRetries: 0 });
   const completion = await client.chat.completions.create(

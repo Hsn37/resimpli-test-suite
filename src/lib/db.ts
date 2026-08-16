@@ -182,15 +182,15 @@ function ensureSchema(): Promise<void> {
         )`
       ),
       db.execute(
-        `CREATE TABLE IF NOT EXISTS weekly_call_reviews (
+        `CREATE TABLE IF NOT EXISTS cycle_call_reviews (
           workspace             TEXT NOT NULL,
-          week_start            INTEGER NOT NULL,
-          week_end              INTEGER NOT NULL,
+          cycle_start           INTEGER NOT NULL,
+          cycle_end             INTEGER NOT NULL,
           candidate_fingerprint TEXT NOT NULL,
           result                TEXT NOT NULL,
           model                 TEXT,
           generated_at          INTEGER NOT NULL,
-          PRIMARY KEY (workspace, week_start)
+          PRIMARY KEY (workspace, cycle_start)
         )`
       ),
       db.execute(
@@ -286,6 +286,11 @@ function ensureSchema(): Promise<void> {
           AND raw_payload IS NOT NULL
           AND json_valid(raw_payload)`
     );
+    // Superseded by cycle_call_reviews when the cycle widened past a week and
+    // the panel moved to a top-3. Dropped rather than migrated: it only ever
+    // held a regenerable LLM cache, and every row in it was already unreachable
+    // once TOP_CALLS_JUDGE_VERSION changed the fingerprint.
+    await db.execute(`DROP TABLE IF EXISTS weekly_call_reviews`);
     await Promise.all([
       // retell_call_id is unique per workspace (Lovable had a global UNIQUE).
       db.execute(
@@ -1534,7 +1539,7 @@ export async function getDashboardCallDetail(
 
 /**
  * Transcripts for many calls in one round-trip, keyed by internal call id.
- * The weekly judge needs nothing but the transcript, so this replaces a
+ * The top-calls judge needs nothing but the transcript, so this replaces a
  * per-candidate getDashboardCallDetail fan-out (3 queries each). Missing ids
  * are simply absent from the map.
  */
@@ -1564,32 +1569,32 @@ export async function getCallTranscriptsByIds(
   return map;
 }
 
-export interface WeeklyCallReview<T = unknown> {
+export interface CycleCallReview<T = unknown> {
   workspace: Workspace;
-  week_start: number;
-  week_end: number;
+  cycle_start: number;
+  cycle_end: number;
   candidate_fingerprint: string;
   result: T;
   model: string | null;
   generated_at: number;
 }
 
-/** Cached LLM ranking for one workspace/week. */
-export async function getWeeklyCallReview<T = unknown>(
+/** Cached LLM ranking for one workspace + cycle. */
+export async function getCycleCallReview<T = unknown>(
   workspace: Workspace,
-  weekStart: number
-): Promise<WeeklyCallReview<T> | null> {
+  cycleStart: number
+): Promise<CycleCallReview<T> | null> {
   const db = await getDb();
   const result = await db.execute({
-    sql: `SELECT * FROM weekly_call_reviews WHERE workspace = ? AND week_start = ?`,
-    args: [workspace, weekStart],
+    sql: `SELECT * FROM cycle_call_reviews WHERE workspace = ? AND cycle_start = ?`,
+    args: [workspace, cycleStart],
   });
   if (result.rows.length === 0) return null;
   const row = result.rows[0] as unknown as Record<string, unknown>;
   return {
     workspace,
-    week_start: Number(row.week_start),
-    week_end: Number(row.week_end),
+    cycle_start: Number(row.cycle_start),
+    cycle_end: Number(row.cycle_end),
     candidate_fingerprint: String(row.candidate_fingerprint),
     result: parseJson<T>(row.result, {} as T),
     model: (row.model as string) ?? null,
@@ -1598,29 +1603,29 @@ export async function getWeeklyCallReview<T = unknown>(
 }
 
 /** Store or replace the recommendation after the qualified shortlist changes. */
-export async function upsertWeeklyCallReview<T>(input: {
+export async function upsertCycleCallReview<T>(input: {
   workspace: Workspace;
-  weekStart: number;
-  weekEnd: number;
+  cycleStart: number;
+  cycleEnd: number;
   candidateFingerprint: string;
   result: T;
   model: string;
 }): Promise<void> {
   const db = await getDb();
   await db.execute({
-    sql: `INSERT INTO weekly_call_reviews
-            (workspace, week_start, week_end, candidate_fingerprint, result, model, generated_at)
+    sql: `INSERT INTO cycle_call_reviews
+            (workspace, cycle_start, cycle_end, candidate_fingerprint, result, model, generated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(workspace, week_start) DO UPDATE SET
-            week_end = excluded.week_end,
+          ON CONFLICT(workspace, cycle_start) DO UPDATE SET
+            cycle_end = excluded.cycle_end,
             candidate_fingerprint = excluded.candidate_fingerprint,
             result = excluded.result,
             model = excluded.model,
             generated_at = excluded.generated_at`,
     args: [
       input.workspace,
-      input.weekStart,
-      input.weekEnd,
+      input.cycleStart,
+      input.cycleEnd,
       input.candidateFingerprint,
       JSON.stringify(input.result),
       input.model,

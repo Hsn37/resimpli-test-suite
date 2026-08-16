@@ -6,6 +6,7 @@ import {
   Download,
   Eye,
   Loader2,
+  Medal,
   Play,
   RefreshCw,
   ShieldAlert,
@@ -15,14 +16,31 @@ import {
 import AudioPlayer from "./AudioPlayer";
 import { useToast } from "./Toast";
 import { fmtDuration, fmtDate, fmtDateTime } from "@/lib/dashboard";
-import type { CallOfWeekCandidate } from "@/lib/callOfWeek";
-import type { CallOfWeekRecommendation } from "@/lib/callOfWeekJudge";
+import type { TopCallsCandidate } from "@/lib/topCalls";
+import type { TopCallsRecommendation } from "@/lib/topCallsJudge";
 import { downloadRecording } from "@/lib/downloadRecording";
 
 const CARD = "rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950";
+const RUNNER_UP_CARD = "border-zinc-200 dark:border-zinc-800";
+// Gold / silver / bronze, indexed by podium rank. Anything outside this list is
+// a runner-up and renders as a plain card.
+const PODIUM = [
+  {
+    badge: "bg-amber-500",
+    card: "border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/15",
+  },
+  {
+    badge: "bg-zinc-400 dark:bg-zinc-500",
+    card: "border-zinc-300 dark:border-zinc-600 bg-zinc-50/70 dark:bg-zinc-900/40",
+  },
+  {
+    badge: "bg-amber-700",
+    card: "border-amber-200 dark:border-amber-900/60 bg-amber-50/25 dark:bg-amber-950/10",
+  },
+];
 
 interface ReviewPayload {
-  recommendation: CallOfWeekRecommendation;
+  recommendation: TopCallsRecommendation;
   model: string | null;
   generated_at: number;
 }
@@ -32,11 +50,11 @@ interface PanelData {
   reported_booked_calls: number;
   legacy_unverified_calls: number;
   eligible_calls: number;
-  shortlist: CallOfWeekCandidate[];
+  shortlist: TopCallsCandidate[];
   review: ReviewPayload | null;
 }
 
-export default function CallOfWeekPanel({
+export default function TopCallsPanel({
   from,
   to,
   isAdmin,
@@ -57,7 +75,7 @@ export default function CallOfWeekPanel({
   const fromMs = from.getTime();
   const toMs = to.getTime();
   const endpoint = useMemo(
-    () => `/api/dashboard/call-of-week?from=${fromMs}&to=${toMs}`,
+    () => `/api/dashboard/top-calls?from=${fromMs}&to=${toMs}`,
     [fromMs, toMs]
   );
 
@@ -69,7 +87,7 @@ export default function CallOfWeekPanel({
     fetch(endpoint)
       .then(async (response) => {
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "Failed to load weekly candidates");
+        if (!response.ok) throw new Error(body.error || "Failed to load candidates");
         return body as PanelData;
       })
       .then((body) => {
@@ -95,11 +113,11 @@ export default function CallOfWeekPanel({
         body: JSON.stringify({ force }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Weekly ranking failed");
+      if (!response.ok) throw new Error(body.error || "Ranking failed");
       setData(body as PanelData);
-      toast("Weekly finalists are ready", "success");
+      toast("Top calls are ready", "success");
     } catch (error) {
-      toast(error instanceof Error ? error.message : "Weekly ranking failed", "error");
+      toast(error instanceof Error ? error.message : "Ranking failed", "error");
     } finally {
       setRanking(false);
     }
@@ -110,8 +128,8 @@ export default function CallOfWeekPanel({
     [data?.shortlist]
   );
   const finalists = data?.review?.recommendation.finalists ?? [];
-  const winnerId = data?.review?.recommendation.winner_call_id;
-  const weekEndInclusive = new Date(toMs - 1);
+  const podiumIds = data?.review?.recommendation.podium_call_ids ?? [];
+  const cycleEndInclusive = new Date(toMs - 1);
 
   return (
     <section className={`${CARD} overflow-hidden`}>
@@ -120,10 +138,10 @@ export default function CallOfWeekPanel({
           <div>
             <div className="flex items-center gap-2">
               <Trophy size={19} className="text-amber-600 dark:text-amber-400" />
-              <h2 className="text-base font-semibold">Call of the Week</h2>
+              <h2 className="text-base font-semibold">Top Calls</h2>
             </div>
             <p className="text-xs text-zinc-500 mt-1">
-              {fmtDate(from)} – {fmtDate(weekEndInclusive)} · Booked appointments with strong QA scores
+              {fmtDate(from)} – {fmtDate(cycleEndInclusive)} · Booked appointments with strong QA scores
             </p>
           </div>
           {data?.review && isAdmin ? (
@@ -141,10 +159,10 @@ export default function CallOfWeekPanel({
 
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-10 text-sm text-zinc-500">
-          <Loader2 size={18} className="animate-spin" /> Loading weekly candidates…
+          <Loader2 size={18} className="animate-spin" /> Loading candidates…
         </div>
       ) : !data ? (
-        <div className="py-10 text-center text-sm text-zinc-500">Weekly candidates could not be loaded.</div>
+        <div className="py-10 text-center text-sm text-zinc-500">Candidates could not be loaded.</div>
       ) : (
         <div className="p-4 space-y-4">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -172,8 +190,8 @@ export default function CallOfWeekPanel({
                 <div className="text-sm font-medium">{data.shortlist.length} qualified calls are ready</div>
                 <p className="text-xs text-zinc-500 mt-1">
                   {isAdmin
-                    ? "The LLM will compare marketing value and return up to five finalists."
-                    : "An admin can run the ranking to pick this week's finalists."}
+                    ? "The LLM will compare marketing value and return a ranked top 3, plus runners-up."
+                    : "An admin can run the ranking to pick this cycle's top calls."}
                 </p>
               </div>
               {isAdmin && (
@@ -212,7 +230,8 @@ export default function CallOfWeekPanel({
                 {finalists.map((finalist, index) => {
                   const candidate = candidatesById.get(finalist.call_id);
                   if (!candidate) return null;
-                  const isWinner = finalist.call_id === winnerId;
+                  // undefined for runners-up and for any out-of-range rank.
+                  const podiumStyle = PODIUM[podiumIds.indexOf(finalist.call_id)];
                   const isLegacyBooking = candidate.booking_source === "legacy_unverified";
                   const clip =
                     finalist.clip_start_seconds != null && finalist.clip_end_seconds != null
@@ -221,19 +240,18 @@ export default function CallOfWeekPanel({
                   return (
                     <article
                       key={finalist.call_id}
-                      className={`rounded-xl border p-4 ${
-                        isWinner
-                          ? "border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/15"
-                          : "border-zinc-200 dark:border-zinc-800"
-                      }`}
+                      className={`rounded-xl border p-4 ${podiumStyle?.card ?? RUNNER_UP_CARD}`}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs text-zinc-400">#{index + 1}</span>
-                            {isWinner && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 text-white px-2 py-0.5 text-xs font-semibold">
-                                <Trophy size={11} /> Recommended winner
+                            {podiumStyle && (
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full ${podiumStyle.badge} text-white px-2 py-0.5 text-xs font-semibold`}
+                              >
+                                {index === 0 ? <Trophy size={11} /> : <Medal size={11} />}
+                                Recommended #{index + 1}
                               </span>
                             )}
                             <span className="text-sm font-semibold">{candidate.agent_name ?? "Inbound call"}</span>
