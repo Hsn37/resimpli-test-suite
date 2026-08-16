@@ -4,8 +4,17 @@ import { createHash } from "crypto";
 import OpenAI from "openai";
 import type { TopCallsCandidate } from "./topCalls";
 
+// Ranking runs on its own model, independent of the grader's app_config value.
+// gpt-5 models reject `max_tokens` (see MAX_COMPLETION_TOKENS below) and reject
+// a non-default temperature once `reasoning_effort` is set — so we leave
+// reasoning off, which also keeps reasoning_tokens at 0 and the output budget
+// entirely for JSON.
+export const TOP_CALLS_MODEL = "gpt-5.4-mini";
 const JUDGE_TEMPERATURE = 0.2;
 const JUDGE_TIMEOUT_MS = 30_000;
+// Five finalists' worth of bounded prose plus the summary; generous so a long
+// response is never truncated into malformed JSON.
+const MAX_COMPLETION_TOKENS = 6_000;
 const MAX_TRANSCRIPT_CHARS = 7_000;
 export const TOP_CALLS_MAX_FINALISTS = 5;
 // How many finalists are promoted to the ranked recommendation. The rest stay
@@ -281,7 +290,7 @@ Return up to five finalists in best-first order and use only supplied call IDs. 
       model: input.model,
       temperature: JUDGE_TEMPERATURE,
       response_format: { type: "json_object" },
-      max_tokens: 3000,
+      max_completion_tokens: MAX_COMPLETION_TOKENS,
       messages: [
         { role: "system", content: system },
         { role: "user", content: JSON.stringify({ candidates: payload }) },

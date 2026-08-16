@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Download,
   Eye,
+  CalendarRange,
   Loader2,
   Medal,
   Play,
@@ -15,12 +16,15 @@ import {
 } from "lucide-react";
 import AudioPlayer from "./AudioPlayer";
 import { useToast } from "./Toast";
-import { fmtDuration, fmtDate, fmtDateTime } from "@/lib/dashboard";
-import type { TopCallsCandidate } from "@/lib/topCalls";
+import { fmtDuration, fmtDate, fmtDateTime, DAY_MS } from "@/lib/dashboard";
+import { TOP_CALLS_MAX_WINDOW_DAYS, type TopCallsCandidate } from "@/lib/topCalls";
 import type { TopCallsRecommendation } from "@/lib/topCallsJudge";
 import { downloadRecording } from "@/lib/downloadRecording";
 
 const CARD = "rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950";
+const DATE_INPUT =
+  "rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1 text-xs tabular-nums";
+
 const RUNNER_UP_CARD = "border-zinc-200 dark:border-zinc-800";
 // Gold / silver / bronze, indexed by podium rank. Anything outside this list is
 // a runner-up and renders as a plain card.
@@ -38,6 +42,20 @@ const PODIUM = [
     card: "border-amber-200 dark:border-amber-900/60 bg-amber-50/25 dark:bg-amber-950/10",
   },
 ];
+
+/** Cycle boundaries are UTC midnights, so keep the picker on the same grid. */
+function isoDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function isoDayToMs(day: string): number {
+  return new Date(`${day}T00:00:00.000Z`).getTime();
+}
+
+/** ISO day strings compare correctly lexicographically. */
+function minIsoDay(a: string, b: string): string {
+  return a < b ? a : b;
+}
 
 interface ReviewPayload {
   recommendation: TopCallsRecommendation;
@@ -72,15 +90,35 @@ export default function TopCallsPanel({
   const [ranking, setRanking] = useState(false);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const { toast } = useToast();
-  const fromMs = from.getTime();
-  const toMs = to.getTime();
+  // Editable range, seeded from the cycle. The cycle runs ahead of today, and
+  // ranking days that have not happened yet only wastes the window — so the
+  // default end is clamped to today.
+  const [rangeFrom, setRangeFrom] = useState(() => isoDay(from.getTime()));
+  const [rangeTo, setRangeTo] = useState(() =>
+    minIsoDay(isoDay(to.getTime() - DAY_MS), isoDay(Date.now()))
+  );
+  const fromMs = isoDayToMs(rangeFrom);
+  // The API treats `to` as exclusive; the picker is inclusive.
+  const toMs = isoDayToMs(rangeTo) + DAY_MS;
+  const rangeDays = Math.round((toMs - fromMs) / DAY_MS);
+  const rangeError =
+    !Number.isFinite(fromMs) || !Number.isFinite(toMs)
+      ? "Pick both dates"
+      : toMs <= fromMs
+        ? "End date must be on or after the start date"
+        : rangeDays > TOP_CALLS_MAX_WINDOW_DAYS
+          ? `Range must be ${TOP_CALLS_MAX_WINDOW_DAYS} days or fewer`
+          : null;
   const endpoint = useMemo(
     () => `/api/dashboard/top-calls?from=${fromMs}&to=${toMs}`,
     [fromMs, toMs]
   );
 
   useEffect(() => {
+    if (rangeError) return;
     let cancelled = false;
+    // Deferred to a microtask on purpose: setting state synchronously inside an
+    // effect trips react-hooks/set-state-in-effect, which is an error here.
     Promise.resolve().then(() => {
       if (!cancelled) setLoading(true);
     });
@@ -102,7 +140,7 @@ export default function TopCallsPanel({
     return () => {
       cancelled = true;
     };
-  }, [endpoint, toast]);
+  }, [endpoint, rangeError, toast]);
 
   async function runRanking(force: boolean) {
     setRanking(true);
@@ -129,7 +167,7 @@ export default function TopCallsPanel({
   );
   const finalists = data?.review?.recommendation.finalists ?? [];
   const podiumIds = data?.review?.recommendation.podium_call_ids ?? [];
-  const cycleEndInclusive = new Date(toMs - 1);
+  const rangeEndInclusive = new Date(toMs - 1);
 
   return (
     <section className={`${CARD} overflow-hidden`}>
@@ -141,20 +179,45 @@ export default function TopCallsPanel({
               <h2 className="text-base font-semibold">Top Calls</h2>
             </div>
             <p className="text-xs text-zinc-500 mt-1">
-              {fmtDate(from)} – {fmtDate(cycleEndInclusive)} · Booked appointments with strong QA scores
+              {rangeError ? "Select a range" : `${fmtDate(new Date(fromMs))} – ${fmtDate(rangeEndInclusive)}`} · Booked appointments with strong QA scores
             </p>
           </div>
-          {data?.review && isAdmin ? (
-            <button
-              onClick={() => runRanking(true)}
-              disabled={ranking}
-              className="flex items-center gap-1.5 text-sm border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 rounded-lg hover:bg-white dark:hover:bg-zinc-900 disabled:opacity-50"
-            >
-              {ranking ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-              Rerun ranking
-            </button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+              <CalendarRange size={14} />
+              <input
+                type="date"
+                value={rangeFrom}
+                max={rangeTo}
+                onChange={(e) => setRangeFrom(e.target.value)}
+                className={DATE_INPUT}
+                aria-label="Range start"
+              />
+            </label>
+            <span className="text-xs text-zinc-500">to</span>
+            <input
+              type="date"
+              value={rangeTo}
+              min={rangeFrom}
+              onChange={(e) => setRangeTo(e.target.value)}
+              className={DATE_INPUT}
+              aria-label="Range end"
+            />
+            {data?.review && isAdmin ? (
+              <button
+                onClick={() => runRanking(true)}
+                disabled={ranking || rangeError != null}
+                className="flex items-center gap-1.5 text-sm border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 rounded-lg hover:bg-white dark:hover:bg-zinc-900 disabled:opacity-50"
+              >
+                {ranking ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                Rerun ranking
+              </button>
+            ) : null}
+          </div>
         </div>
+        {rangeError && (
+          <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">{rangeError}</p>
+        )}
       </div>
 
       {loading ? (

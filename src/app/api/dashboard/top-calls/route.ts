@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { requireAdmin } from "@/lib/admin";
 import {
-  getAppConfig,
   getCallTranscriptsByIds,
   getCycleCallReview,
   listDashboardCallsInRange,
@@ -13,23 +12,23 @@ import { CALLS_WINDOW_LIMIT, CYCLE_MS, DAY_MS } from "@/lib/dashboard";
 import {
   buildTopCallsPool,
   rankTopCallsCandidates,
+  TOP_CALLS_MAX_WINDOW_DAYS,
   TOP_CALLS_SHORTLIST_LIMIT,
 } from "@/lib/topCalls";
 import {
   TOP_CALLS_MAX_FINALISTS,
+  TOP_CALLS_MODEL,
   topCallsFingerprint,
   judgeTopCalls,
   selectFinalists,
   type TopCallsFinalist,
   type TopCallsRecommendation,
 } from "@/lib/topCallsJudge";
-import { APP_CONFIG_KEYS, DEFAULT_GRADER_MODEL } from "@/lib/graderRubric";
 
 export const maxDuration = 120;
 
-// One cycle plus a day of slack at the edges. Derived from CYCLE_MS so widening
-// the cycle can't silently start 400-ing the panel's own range.
-const MAX_WINDOW_MS = CYCLE_MS + DAY_MS;
+// Never below one cycle, which is the panel's own default range.
+const MAX_WINDOW_MS = Math.max(TOP_CALLS_MAX_WINDOW_DAYS * DAY_MS, CYCLE_MS + DAY_MS);
 // Refill at most two additional batches when legacy calls are rejected. This
 // bounds request time/cost while preventing a weak first batch from crowding out
 // later candidates.
@@ -48,17 +47,13 @@ async function loadPool(request: Request) {
   const window = readWindow(request);
   if (!window) return null;
   const workspace = await getServerWorkspace();
-  const [calls, model] = await Promise.all([
-    listDashboardCallsInRange(
-      workspace,
-      window.from,
-      window.to,
-      CALLS_WINDOW_LIMIT
-    ),
-    getAppConfig<string>(workspace, APP_CONFIG_KEYS.graderModel).then(
-      (value) => value || DEFAULT_GRADER_MODEL
-    ),
-  ]);
+  const model = TOP_CALLS_MODEL;
+  const calls = await listDashboardCallsInRange(
+    workspace,
+    window.from,
+    window.to,
+    CALLS_WINDOW_LIMIT
+  );
   const candidates = rankTopCallsCandidates(calls);
   const pool = buildTopCallsPool(calls, candidates);
   // Fingerprint the entire eligible queue—not only the first 20—because refill
@@ -85,7 +80,7 @@ export async function GET(request: Request) {
 
   const loaded = await loadPool(request);
   if (!loaded) {
-    return NextResponse.json({ error: "A valid from/to cycle window is required" }, { status: 400 });
+    return NextResponse.json({ error: `A valid from/to window of at most ${TOP_CALLS_MAX_WINDOW_DAYS} days is required` }, { status: 400 });
   }
   const cached = await getCycleCallReview<TopCallsRecommendation>(
     loaded.workspace,
@@ -117,7 +112,7 @@ export async function POST(request: Request) {
 
   const loaded = await loadPool(request);
   if (!loaded) {
-    return NextResponse.json({ error: "A valid from/to cycle window is required" }, { status: 400 });
+    return NextResponse.json({ error: `A valid from/to window of at most ${TOP_CALLS_MAX_WINDOW_DAYS} days is required` }, { status: 400 });
   }
   // An empty cycle is normal, not an unprocessable request. Keep GET/POST
   // semantics consistent and let the UI render the funnel counts.

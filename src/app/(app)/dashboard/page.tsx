@@ -461,7 +461,10 @@ function DashboardContent() {
       {/* Automation stats (admin-only) — sits right under the backfill section. */}
       {isAdmin && <AutomationStats />}
 
+      {/* Keyed on the cycle: the anchor only resolves once the rubric loads, and
+          remounting reseeds the panel's date pickers from the real cycle. */}
       <TopCallsPanel
+        key={`${cycle.start.getTime()}-${cycle.end.getTime()}`}
         from={cycle.start}
         to={cycle.end}
         isAdmin={isAdmin}

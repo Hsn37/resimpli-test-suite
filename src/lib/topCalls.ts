@@ -4,6 +4,9 @@
 // marketing judge before they can become finalists.
 
 export const TOP_CALLS_SHORTLIST_LIMIT = 20;
+// Upper bound on a user-picked range, so an admin cannot aim the judge at a
+// year of calls. Shared by the route (enforcement) and panel (validation).
+export const TOP_CALLS_MAX_WINDOW_DAYS = 31;
 export const TOP_CALLS_MIN_DURATION_SECONDS = 3 * 60;
 export const TOP_CALLS_MIN_GRADE = 50;
 export const TOP_CALLS_MIN_REP_SCORE = 70;
