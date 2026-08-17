@@ -23,7 +23,25 @@ export const TOP_CALLS_PODIUM_SIZE = 3;
 // Increment whenever prompt semantics or output validation changes. Included in
 // the cache fingerprint so old recommendations cannot survive a judge update.
 // 4: single winner_call_id replaced by a ranked podium_call_ids.
-export const TOP_CALLS_JUDGE_VERSION = "4";
+// 5: booking became a labelled outcome instead of a hard finalist gate.
+export const TOP_CALLS_JUDGE_VERSION = "5";
+
+/**
+ * How the call ended, best to worst. Booking is a ranking signal, not an
+ * entry requirement — a call with no booking can still be the best clip, it
+ * just carries a weaker payoff and says so on the card.
+ */
+export const BOOKING_OUTCOMES = [
+  "retell_confirmed",
+  "confirmed_in_transcript",
+  "committed_next_step",
+  "none",
+] as const;
+export type BookingOutcome = (typeof BOOKING_OUTCOMES)[number];
+// Confidence the judge must clear to claim each transcript-derived outcome. A
+// firm booking is asserted more strongly than "they agreed to a callback".
+const CONFIRMED_MIN_CONFIDENCE = 0.7;
+const NEXT_STEP_MIN_CONFIDENCE = 0.5;
 
 export interface TopCallsFinalist {
   call_id: string;
@@ -33,8 +51,8 @@ export interface TopCallsFinalist {
   clip_start_seconds: number | null;
   clip_end_seconds: number | null;
   privacy_risks: string[];
-  booking_confirmed: true;
-  booking_confirmation_evidence: string;
+  booking_outcome: BookingOutcome;
+  booking_evidence: string;
   booking_confidence: number;
   audio_review_required: true;
 }
@@ -153,6 +171,42 @@ export function selectFinalists(
   };
 }
 
+/**
+ * Classify how the call ended. Retell's flag is authoritative and is never
+ * re-judged. Everything else is the judge's transcript reading, demoted a tier
+ * (and ultimately to "none") when it lacks evidence or confidence — an
+ * unproven claim downgrades the label rather than dropping the call.
+ */
+function readBookingOutcome(
+  row: Record<string, unknown>,
+  candidate: TopCallsCandidate
+): { outcome: BookingOutcome; evidence: string; confidence: number } {
+  if (candidate.booking_source === "retell_analysis") {
+    return {
+      outcome: "retell_confirmed",
+      evidence: candidate.booking_evidence,
+      confidence: 1,
+    };
+  }
+  const evidence = boundedString(row.booking_evidence);
+  const confidence = Math.max(
+    0,
+    Math.min(1, toFiniteNumber(row.booking_confidence) ?? 0)
+  );
+  const claimed = BOOKING_OUTCOMES.find((value) => value === row.booking_outcome);
+  // The judge cannot award itself the Retell-confirmed tier.
+  if (!claimed || claimed === "retell_confirmed" || claimed === "none" || !evidence) {
+    return { outcome: "none", evidence, confidence };
+  }
+  if (claimed === "confirmed_in_transcript" && confidence >= CONFIRMED_MIN_CONFIDENCE) {
+    return { outcome: claimed, evidence, confidence };
+  }
+  if (confidence >= NEXT_STEP_MIN_CONFIDENCE) {
+    return { outcome: "committed_next_step", evidence, confidence };
+  }
+  return { outcome: "none", evidence, confidence };
+}
+
 function parseRecommendation(
   raw: Record<string, unknown>,
   candidates: TopCallsCandidate[]
@@ -169,19 +223,7 @@ function parseRecommendation(
     const callId = String(row.call_id ?? "");
     if (!validIds.has(callId) || seen.has(callId)) continue;
     const candidate = candidateById.get(callId)!;
-    const bookingEvidence = boundedString(row.booking_confirmation_evidence);
-    const bookingConfidence = Math.max(
-      0,
-      Math.min(1, toFiniteNumber(row.booking_confidence) ?? 0)
-    );
-    // Retell's true flag is authoritative. A legacy call must be affirmatively
-    // verified by the transcript judge; omission/uncertainty keeps it out.
-    if (
-      candidate.booking_source === "legacy_unverified" &&
-      (row.booking_confirmed !== true || !bookingEvidence || bookingConfidence < 0.7)
-    ) {
-      continue;
-    }
+    const booking = readBookingOutcome(row, candidate);
     seen.add(callId);
     const score = Math.max(0, Math.min(100, Math.round(toFiniteNumber(row.marketing_score) ?? 0)));
     const privacyRisks = Array.isArray(row.privacy_risks)
@@ -201,13 +243,9 @@ function parseRecommendation(
       clip_start_seconds: validClip ? clipStart : null,
       clip_end_seconds: validClip ? clipEnd : null,
       privacy_risks: privacyRisks,
-      booking_confirmed: true,
-      booking_confirmation_evidence:
-        candidate.booking_source === "retell_analysis"
-          ? candidate.booking_evidence
-          : bookingEvidence,
-      booking_confidence:
-        candidate.booking_source === "retell_analysis" ? 1 : bookingConfidence,
+      booking_outcome: booking.outcome,
+      booking_evidence: booking.evidence,
+      booking_confidence: booking.confidence,
       // The judge receives transcripts, not audio. Never imply otherwise.
       audio_review_required: true,
     });
@@ -248,13 +286,15 @@ export async function judgeTopCalls(input: {
 
   const system = `You select the best phone calls of the cycle for a real-estate acquisitions company's marketing team.
 
-Every candidate has already passed the recording, rep score >=70, no-caller-AI-suspicion, duration >=3-minute, and critical-failure gates. A non-null QA grade is >=50; QA grade can legitimately be null when no configured failure class was applicable.
+Every candidate has already passed the recording, rep score >=60, no-caller-AI-suspicion, duration >=2-minute, and critical-failure gates. A non-null QA grade is >=50; QA grade can legitimately be null when no configured failure class was applicable.
 
-Booking has two possible sources:
-- "retell_analysis": appointment_booked=true came from Retell post-call analysis and is authoritative. Do not re-infer or reject this booking.
-- "legacy_unverified": the historical call predates that field. Inspect the transcript and include this call as a finalist only when it clearly shows the caller accepting a specific appointment and the agent confirming the newly booked appointment. An offered slot, callback, transfer, pre-existing appointment, vague next step, or unaccepted time is not enough. Exclude an unconfirmed legacy call from finalists.
+A booking is a ranking signal, NOT an entry requirement. Never exclude a call just because it has no booking — judge it on marketing value and label how it ended with "booking_outcome":
+- "retell_confirmed": booking_source is retell_analysis. Authoritative; do not re-infer or reject it, and never assign this tier yourself.
+- "confirmed_in_transcript": the caller accepts a specific appointment and the agent confirms the newly booked appointment. Requires booking_confidence >= 0.7.
+- "committed_next_step": a concrete agreed next step short of a booked appointment — a scheduled callback at a stated time, an accepted warm transfer, or an agreed send-and-follow-up. Requires booking_confidence >= 0.5.
+- "none": an offered but unaccepted slot, a pre-existing appointment, a vague "we'll be in touch", or no next step at all.
 
-Rank candidates for MARKETING value, not length. Score 0-100 using: compelling seller story 25%, natural/human conversation 20%, rapport and empathy 15%, objection handling or meaningful progression 15%, clear appointment payoff 15%, and standalone clarity 10%. Penalize rambling, confusion, weak narrative, generic exchanges, and privacy/brand risk. Identify names, phone numbers, street addresses, financial details, health/family details, or other content that needs consent or redaction.
+Rank candidates for MARKETING value, not length. Score 0-100 using: compelling seller story 25%, natural/human conversation 20%, rapport and empathy 15%, objection handling or meaningful progression 15%, payoff strength 15% (a confirmed booking scores full marks here, a committed next step partial, none little), and standalone clarity 10%. Penalize rambling, confusion, weak narrative, generic exchanges, and privacy/brand risk. Identify names, phone numbers, street addresses, financial details, health/family details, or other content that needs consent or redaction.
 
 You only receive transcripts, not recordings. Do not claim to have judged audio quality. Set a useful clip range only when transcript timestamps support it; otherwise use null. A human must listen to the finalists and approve sound quality and privacy.
 
@@ -270,15 +310,15 @@ Return ONLY JSON:
       "strongest_moment": "specific moment or turn range",
       "clip_start_seconds": null,
       "clip_end_seconds": null,
-      "booking_confirmed": true,
-      "booking_confirmation_evidence": "specific transcript quote/turns proving a newly booked appointment",
+      "booking_outcome": "confirmed_in_transcript | committed_next_step | none",
+      "booking_evidence": "specific transcript quote/turns supporting that outcome",
       "booking_confidence": 0.0,
       "privacy_risks": ["specific item to review/redact"]
     }
   ]
 }
 
-For every legacy_unverified finalist, booking_confirmed must be true, booking_confirmation_evidence must quote the transcript with turn references, and booking_confidence must be 0-1. Do not return that call at all unless confidence is at least 0.7. Retell-confirmed calls may use the supplied Retell evidence.
+Whenever booking_outcome is not "none", booking_evidence must quote the transcript with turn references and booking_confidence must be 0-1. An outcome asserted without evidence, or below its confidence bar, is downgraded a tier — so claim the tier you can actually support. Retell-confirmed calls need no evidence from you.
 
 Return up to five finalists in best-first order and use only supplied call IDs. It is valid to return an empty finalists array when no candidate is suitable.
 

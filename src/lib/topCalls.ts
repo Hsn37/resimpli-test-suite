@@ -7,9 +7,11 @@ export const TOP_CALLS_SHORTLIST_LIMIT = 20;
 // Upper bound on a user-picked range, so an admin cannot aim the judge at a
 // year of calls. Shared by the route (enforcement) and panel (validation).
 export const TOP_CALLS_MAX_WINDOW_DAYS = 31;
-export const TOP_CALLS_MIN_DURATION_SECONDS = 3 * 60;
+// 2 minutes, not 3: prod call duration is p50 23s / p90 177s, so a 3-minute
+// floor sat above the 90th percentile and rejected 99 of 111 calls on its own.
+export const TOP_CALLS_MIN_DURATION_SECONDS = 2 * 60;
 export const TOP_CALLS_MIN_GRADE = 50;
-export const TOP_CALLS_MIN_REP_SCORE = 70;
+export const TOP_CALLS_MIN_REP_SCORE = 60;
 
 // A call with one of these failures is a poor publishing candidate even when
 // its aggregate grade clears the broad floor. Specific gates are more stable

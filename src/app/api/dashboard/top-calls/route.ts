@@ -194,7 +194,7 @@ export async function POST(request: Request) {
       podium_call_ids: selected.podiumCallIds,
       summary:
         summaries.join(" ").slice(0, 800) ||
-        "No call had both a verified appointment and sufficient marketing value.",
+        "No call in this range had enough marketing value to publish.",
       finalists: selected.finalists,
       evaluated_call_ids: Array.from(new Set(evaluatedCallIds)),
     };

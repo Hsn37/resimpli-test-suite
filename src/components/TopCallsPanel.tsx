@@ -18,7 +18,7 @@ import AudioPlayer from "./AudioPlayer";
 import { useToast } from "./Toast";
 import { fmtDuration, fmtDate, fmtDateTime, DAY_MS } from "@/lib/dashboard";
 import { TOP_CALLS_MAX_WINDOW_DAYS, type TopCallsCandidate } from "@/lib/topCalls";
-import type { TopCallsRecommendation } from "@/lib/topCallsJudge";
+import type { TopCallsFinalist, TopCallsRecommendation } from "@/lib/topCallsJudge";
 import { downloadRecording } from "@/lib/downloadRecording";
 
 const CARD = "rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950";
@@ -26,6 +26,34 @@ const DATE_INPUT =
   "rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1 text-xs tabular-nums";
 
 const RUNNER_UP_CARD = "border-zinc-200 dark:border-zinc-800";
+const AMBER_TEXT = "text-amber-700 dark:text-amber-400";
+// How each booking outcome reads on a finalist card. Booking no longer gates
+// entry, so a call with none still appears — it just says so plainly.
+const BOOKING_LABELS: Record<
+  TopCallsFinalist["booking_outcome"],
+  { label: string; tone: string; confirmed: boolean }
+> = {
+  retell_confirmed: {
+    label: "Appointment confirmed by Retell",
+    tone: "text-zinc-500",
+    confirmed: true,
+  },
+  confirmed_in_transcript: {
+    label: "Appointment confirmed in the transcript",
+    tone: AMBER_TEXT,
+    confirmed: true,
+  },
+  committed_next_step: {
+    label: "Committed next step, not a booked appointment",
+    tone: AMBER_TEXT,
+    confirmed: false,
+  },
+  none: {
+    label: "No booking or committed next step",
+    tone: AMBER_TEXT,
+    confirmed: false,
+  },
+};
 // Gold / silver / bronze, indexed by podium rank. Anything outside this list is
 // a runner-up and renders as a plain card.
 const PODIUM = [
@@ -179,7 +207,7 @@ export default function TopCallsPanel({
               <h2 className="text-base font-semibold">Top Calls</h2>
             </div>
             <p className="text-xs text-zinc-500 mt-1">
-              {rangeError ? "Select a range" : `${fmtDate(new Date(fromMs))} – ${fmtDate(rangeEndInclusive)}`} · Booked appointments with strong QA scores
+              {rangeError ? "Select a range" : `${fmtDate(new Date(fromMs))} – ${fmtDate(rangeEndInclusive)}`} · Ranked for marketing value, booking outcome labelled
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -231,20 +259,20 @@ export default function TopCallsPanel({
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             <Stat label="Calls" value={data.total_calls} />
             <Stat label="Confirmed by Retell" value={data.reported_booked_calls} />
-            <Stat label="Legacy to verify" value={data.legacy_unverified_calls} />
+            <Stat label="No Retell flag" value={data.legacy_unverified_calls} />
             <Stat label="Passed all gates" value={data.eligible_calls} />
             <Stat label="LLM shortlist" value={data.shortlist.length} />
           </div>
 
           <div className="text-xs text-zinc-500">
-            Gates: Retell-confirmed or historical booking pending transcript verification · recording present · grade null or ≥50 · rep score ≥70 · no AI suspicion · at least 3 minutes · no critical QA failure
+            Gates: no explicit “not booked” flag · recording present · grade null or ≥50 · rep score ≥60 · no AI suspicion · at least 2 minutes · no critical QA failure. Booking is ranked, not required.
           </div>
 
           {data.shortlist.length === 0 ? (
             <div className="rounded-lg border border-dashed border-zinc-300 dark:border-zinc-700 p-6 text-center">
               <div className="text-sm font-medium">No qualified calls yet</div>
               <p className="text-xs text-zinc-500 mt-1">
-                Explicit false flags are excluded. Older calls with a missing flag can enter the quality pool, but the transcript judge must verify a newly booked appointment before they can become finalists.
+                Only calls Retell explicitly marked as not booked are excluded outright. Everything else needs a recording, at least 2 minutes, and clean QA to reach the judge.
               </p>
             </div>
           ) : !data.review ? (
@@ -283,9 +311,9 @@ export default function TopCallsPanel({
 
               {finalists.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-zinc-300 dark:border-zinc-700 p-6 text-center">
-                  <div className="text-sm font-medium">No publishable finalist found</div>
+                  <div className="text-sm font-medium">No finalist returned</div>
                   <p className="text-xs text-zinc-500 mt-1">
-                    The judge did not find a call with both a verified appointment and enough marketing value. Historical calls without a confirmed booking were excluded.
+                    The judge reviewed the shortlist but found nothing worth publishing. Try widening the date range.
                   </p>
                 </div>
               ) : (
@@ -295,7 +323,7 @@ export default function TopCallsPanel({
                   if (!candidate) return null;
                   // undefined for runners-up and for any out-of-range rank.
                   const podiumStyle = PODIUM[podiumIds.indexOf(finalist.call_id)];
-                  const isLegacyBooking = candidate.booking_source === "legacy_unverified";
+                  const outcome = BOOKING_LABELS[finalist.booking_outcome];
                   const clip =
                     finalist.clip_start_seconds != null && finalist.clip_end_seconds != null
                       ? `${fmtDuration(Math.round(finalist.clip_start_seconds))}–${fmtDuration(Math.round(finalist.clip_end_seconds))}`
@@ -361,16 +389,18 @@ export default function TopCallsPanel({
                           Review/redact: {finalist.privacy_risks.join("; ")}
                         </div>
                       )}
-                      <div className={`flex items-start gap-1.5 mt-2 text-xs ${isLegacyBooking ? "text-amber-700 dark:text-amber-400" : "text-zinc-500"}`}>
-                        {isLegacyBooking ? (
-                          <ShieldAlert size={13} className="shrink-0 mt-0.5" />
-                        ) : (
+                      <div className={`flex items-start gap-1.5 mt-2 text-xs ${outcome.tone}`}>
+                        {outcome.confirmed ? (
                           <CheckCircle2 size={13} className="shrink-0 mt-0.5 text-green-600 dark:text-green-400" />
+                        ) : (
+                          <ShieldAlert size={13} className="shrink-0 mt-0.5" />
                         )}
                         <span>
-                          {isLegacyBooking
-                            ? `Historical booking verified from the transcript (${Math.round(finalist.booking_confidence * 100)}% confidence): ${finalist.booking_confirmation_evidence}`
-                            : "Appointment confirmed by Retell"}
+                          {outcome.label}
+                          {finalist.booking_outcome !== "retell_confirmed" &&
+                            finalist.booking_outcome !== "none" &&
+                            ` (${Math.round(finalist.booking_confidence * 100)}% confidence)`}
+                          {finalist.booking_evidence ? `: ${finalist.booking_evidence}` : ""}
                           {" · final audio quality and consent require human approval"}
                         </span>
                       </div>
