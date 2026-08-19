@@ -32,16 +32,22 @@ function ShareContent({ callId }: { callId: string }) {
     const url = ws
       ? `/api/calls/${callId}?ws=${encodeURIComponent(ws)}`
       : `/api/calls/${callId}`;
+    let status: number | null = null;
     fetch(url)
       .then((res) => {
         if (!res.ok) {
+          status = res.status;
           setErrorStatus(res.status);
           throw new Error("Failed to fetch call");
         }
         return res.json();
       })
       .then(setData)
-      .catch((err) => toast(err.message, "error"))
+      // The 403 case already renders its own Shield message below — a
+      // generic error toast on top of it is redundant.
+      .catch((err) => {
+        if (status !== 403) toast(err.message, "error");
+      })
       .finally(() => setLoading(false));
   }, [callId, toast]);
 
