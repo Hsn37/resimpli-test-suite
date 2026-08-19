@@ -13,15 +13,7 @@ import {
 import { TEST_PRESETS } from "@/lib/tests";
 import VarEditor from "./VarEditor";
 import JsonDropzone from "./JsonDropzone";
-
-const PRIORITY_STYLES: Record<string, string> = {
-  P0: "bg-red-500/15 text-red-600 dark:text-red-400",
-  P1: "bg-amber-500/15 text-amber-600 dark:text-amber-500",
-  P2: "bg-zinc-500/15 text-zinc-500 dark:text-zinc-400",
-  Obs: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-};
-
-const CHIP = "text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full";
+import TestDetailsPanel from "./TestDetailsPanel";
 
 const MODE_COLORS: Record<CallMode, { border: string; bg: string; btn: string; text: string }> = {
   inbound: {
@@ -83,7 +75,11 @@ function groupLabelColor(group: string): string {
 interface Props {
   agentName: string;
   agentTag?: string;
-  onStartCall: (mode: CallMode, variables: Record<string, string>) => void;
+  onStartCall: (
+    mode: CallMode,
+    variables: Record<string, string>,
+    testCase: TestPreset | null
+  ) => void;
   onBack: () => void;
   initialMode?: CallMode;
   initialVariables?: Record<string, string>;
@@ -196,10 +192,10 @@ export default function CallSetup({
   return (
     <div className="flex flex-col lg:h-[calc(100vh-8rem)] max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className="flex items-center justify-between mb-6 shrink-0">
         <div>
-          <h2 className="text-xl font-semibold">Call Setup</h2>
-          <p className="text-sm text-zinc-500">Agent: {agentName}</p>
+          <h2 className="text-2xl font-semibold">Call Setup</h2>
+          <p className="text-sm text-zinc-500 mt-0.5">Agent: {agentName}</p>
         </div>
         <div className="flex items-center gap-3">
           {modeIsChoosable ? (
@@ -208,7 +204,7 @@ export default function CallSetup({
                 value={mode ?? ""}
                 onChange={(e) => handleModeChange(e.target.value as CallMode)}
                 title="Call direction"
-                className={`appearance-none text-xs font-semibold uppercase tracking-wide pl-3 pr-7 py-1.5 rounded-full border ${colors.border} ${colors.bg} ${colors.text}`}
+                className={`appearance-none text-xs font-semibold uppercase tracking-wide pl-3.5 pr-8 py-2 rounded-full border shadow-sm ${colors.border} ${colors.bg} ${colors.text}`}
               >
                 <option value="" disabled>
                   Select direction
@@ -230,7 +226,7 @@ export default function CallSetup({
             mode && (
               <span
                 title="Set by the agent's tag or the selected test case"
-                className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide px-3 py-1.5 rounded-full ${colors.bg} ${colors.text}`}
+                className={`flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide px-3.5 py-2 rounded-full ${colors.bg} ${colors.text}`}
               >
                 {MODE_ICONS[mode]}
                 {CALL_MODES[mode].label}
@@ -247,22 +243,22 @@ export default function CallSetup({
       </div>
 
       {/* Preset + JSON row */}
-      <div className="shrink-0 flex items-center gap-2 mb-2">
+      <div className="shrink-0 flex items-center gap-2 mb-2.5">
         <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
           Test case
         </span>
-        <span className="text-[11px] font-medium text-zinc-500 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">
+        <span className="text-[11px] font-medium text-zinc-500 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded-md">
           {availablePresets.length} available
         </span>
       </div>
-      <div className="shrink-0 flex items-center gap-2 mb-4">
+      <div className="shrink-0 flex items-center gap-2 mb-5">
         <div className="relative flex-1" ref={presetMenuRef}>
           <button
             type="button"
             onClick={() => setPresetMenuOpen((open) => !open)}
             aria-haspopup="listbox"
             aria-expanded={presetMenuOpen}
-            className="w-full flex items-center justify-between gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-3.5 pr-3 py-2.5 text-sm font-medium transition-colors hover:border-zinc-400 dark:hover:border-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full flex items-center justify-between gap-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-sm pl-4 pr-3 py-3 text-sm font-medium transition-all hover:border-zinc-300 dark:hover:border-zinc-600 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <span
               className={
@@ -282,7 +278,7 @@ export default function CallSetup({
           {presetMenuOpen && (
             <div
               role="listbox"
-              className="absolute z-20 mt-1 w-full max-h-80 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1"
+              className="absolute z-20 mt-1.5 w-full max-h-80 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg py-1.5"
             >
               {Object.entries(presetGroups).map(([group, presets]) => (
                 <div key={group}>
@@ -327,7 +323,7 @@ export default function CallSetup({
         <JsonDropzone onDrop={handleJsonDrop} />
         <button
           onClick={clearVars}
-          className="flex items-center gap-1 px-3 py-2.5 text-xs text-zinc-400 hover:text-red-500 border border-zinc-300 dark:border-zinc-700 rounded-lg transition-colors shrink-0"
+          className="flex items-center gap-1 px-3.5 py-3 text-xs text-zinc-400 hover:text-red-500 border border-zinc-300 dark:border-zinc-700 rounded-xl transition-colors shrink-0"
         >
           <Trash2 size={12} />
           Clear
@@ -336,10 +332,10 @@ export default function CallSetup({
 
       {/* Lower area: variables (large) beside the test details.
           On mobile it stacks and the page scrolls; on lg it's a fixed-height split. */}
-      <div className="flex flex-col lg:flex-row gap-4 lg:flex-1 lg:min-h-0">
+      <div className="flex flex-col lg:flex-row gap-6 lg:flex-1 lg:min-h-0">
         {/* Variables column — stays large */}
         <div className="flex flex-col lg:flex-1 lg:min-h-0 order-2 lg:order-1">
-          <div className="shrink-0 flex items-center gap-2 mb-2">
+          <div className="shrink-0 h-5 flex items-center gap-2 mb-2.5">
             <span className={`text-xs font-bold uppercase tracking-wide ${colors.text}`}>
               Dynamic Variables
             </span>
@@ -347,7 +343,7 @@ export default function CallSetup({
               {filledCount} filled / {varCount} total
             </span>
           </div>
-          <div className="pr-1 lg:flex-1 lg:overflow-y-auto lg:min-h-0">
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 shadow-sm p-3 lg:flex-1 lg:overflow-y-auto lg:min-h-0">
             <VarEditor
               variables={variables}
               onChange={(vars) =>
@@ -363,113 +359,13 @@ export default function CallSetup({
         {/* Test details column — shows first on mobile, right side on desktop */}
         {selectedTest && (
           <div className="lg:w-96 lg:shrink-0 flex flex-col lg:min-h-0 order-1 lg:order-2">
-            <div className="shrink-0 flex items-center justify-between gap-2 mb-2">
-              <span className={`text-xs font-bold uppercase tracking-wide ${colors.text}`}>
-                Test Details
-              </span>
-              <div className="flex items-center gap-1 shrink-0">
-                <span className={`${CHIP} font-bold ${PRIORITY_STYLES[selectedTest.priority] ?? "bg-zinc-200 dark:bg-zinc-800"}`}>
-                  {selectedTest.priority}
-                </span>
-                {selectedTest.highRisk && (
-                  <span className={`${CHIP} font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400`}>
-                    ★ High risk
-                  </span>
-                )}
-                <span
-                  title={`Targets the ${selectedTest.agentScope} agent`}
-                  className={`${CHIP} bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300`}
-                >
-                  {selectedTest.agentScope}
-                </span>
-              </div>
-            </div>
-            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-3 text-sm lg:flex-1 lg:overflow-y-auto lg:min-h-0">
-              <div className="font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-                {selectedTest.name}
-              </div>
-
-              {(selectedTest.agentConfig === "Variant" || selectedTest.needsLeadProfile) && (
-                <div className="flex flex-wrap gap-1 mb-3">
-                  {selectedTest.agentConfig === "Variant" && (
-                    <span className={`${CHIP} bg-purple-500/15 text-purple-600 dark:text-purple-400`}>
-                      Variant config
-                    </span>
-                  )}
-                  {selectedTest.needsLeadProfile && (
-                    <span className={`${CHIP} bg-teal-500/15 text-teal-600 dark:text-teal-400`}>
-                      Lead profile staged
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {selectedTest.setup && (
-                <div className="mb-3">
-                  <div className="text-xs font-bold uppercase tracking-wide mb-0.5 text-amber-600 dark:text-amber-500">
-                    Setup
-                  </div>
-                  <p className="text-zinc-700 dark:text-zinc-300">{selectedTest.setup}</p>
-                </div>
-              )}
-
-              <div className="mb-3">
-                <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
-                  Expected outcome
-                </div>
-                <p className="text-zinc-700 dark:text-zinc-300">
-                  {selectedTest.expectedBehavior}
-                </p>
-              </div>
-
-              {selectedTest.sample && (
-                <div className="mb-3">
-                  <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
-                    Agent should say (sample)
-                  </div>
-                  <p className="italic text-zinc-600 dark:text-zinc-400 border-l-2 border-zinc-300 dark:border-zinc-700 pl-2">
-                    {selectedTest.sample}
-                  </p>
-                </div>
-              )}
-
-              {selectedTest.userMessages.length > 0 && (
-                <div className="mb-3">
-                  <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
-                    What to say, in order
-                  </div>
-                  <ol className="list-decimal list-inside space-y-0.5 text-zinc-700 dark:text-zinc-300">
-                    {selectedTest.userMessages.map((m, i) => (
-                      <li key={i}>{m}</li>
-                    ))}
-                  </ol>
-                </div>
-              )}
-
-              {selectedTest.testerNotes && (
-                <div className="mb-3">
-                  <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
-                    Tester notes
-                  </div>
-                  <p className="text-zinc-600 dark:text-zinc-400">{selectedTest.testerNotes}</p>
-                </div>
-              )}
-
-              <div>
-                <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${colors.text}`}>
-                  Expected path
-                </div>
-                <p className="font-mono text-xs text-zinc-500 break-words">
-                  {selectedTest.expectedPath}
-                </p>
-              </div>
-            </div>
+            <TestDetailsPanel testCase={selectedTest} accentClass={colors.text} />
           </div>
         )}
       </div>
 
       {/* Pinned footer */}
-      <div className="shrink-0 pt-4 mt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
+      <div className="shrink-0 pt-5 mt-5 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
         <div className="text-sm text-zinc-500">
           <span className={`font-medium ${colors.text}`}>
             {mode ? CALL_MODES[mode].label : "Select a call direction above"}
@@ -477,9 +373,9 @@ export default function CallSetup({
           {selectedTest && <span> &middot; {selectedTest.name}</span>}
         </div>
         <button
-          onClick={() => mode && onStartCall(mode, variables)}
+          onClick={() => mode && onStartCall(mode, variables, selectedTest)}
           disabled={!mode}
-          className={`flex items-center gap-2 ${colors.btn} text-white px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
+          className={`flex items-center gap-2 ${colors.btn} text-white px-8 py-3 rounded-xl font-medium shadow-sm hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none`}
         >
           <Phone size={18} />
           Start Call

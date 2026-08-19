@@ -13,15 +13,24 @@ import {
   Eye,
 } from "lucide-react";
 import { RetellWebClient } from "retell-client-js-sdk";
-import { CALL_MODES, type CallMode } from "@/lib/presets";
+import { CALL_MODES, type CallMode, type TestPreset } from "@/lib/presets";
 import { logCall, patchCallGrade } from "@/lib/callLog";
 import { startRinging, stopRinging } from "@/lib/ringTone";
 import { useToast } from "./Toast";
 import CallTimer from "./CallTimer";
 import CallViewer from "./CallViewer";
 import Stars from "./Stars";
+import TestDetailsPanel from "./TestDetailsPanel";
 
 type CallPhase = "mic-check" | "ringing" | "connected" | "ended";
+
+// Matches the direction accent colors used in CallSetup's mode picker, so
+// the reference panel's headings stay visually consistent between screens.
+const MODE_TEXT_COLORS: Record<CallMode, string> = {
+  inbound: "text-blue-600",
+  outbound_followup: "text-orange-600",
+  speed_to_lead: "text-green-600",
+};
 
 interface Props {
   agentId: string;
@@ -29,6 +38,7 @@ interface Props {
   version?: number;
   mode: CallMode;
   variables: Record<string, string>;
+  testCase?: TestPreset | null;
   userEmail: string;
   onBack: () => void;
 }
@@ -39,6 +49,7 @@ export default function CallScreen({
   version,
   mode,
   variables,
+  testCase,
   userEmail,
   onBack,
 }: Props) {
@@ -271,9 +282,31 @@ export default function CallScreen({
     }
   }
 
+  // Wraps phase content with the always-visible test-details reference panel,
+  // when a test case was selected for this call, so the tester can keep
+  // referring to what-to-say/expected-behavior throughout the whole call.
+  // Bounded to the same viewport budget as CallSetup's layout so only the
+  // test-details column scrolls internally — the page itself never does.
+  function withTestPanel(content: React.ReactNode) {
+    if (!testCase) return content;
+    return (
+      <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-8rem)] lg:min-h-0 max-w-5xl mx-auto">
+        {/* The call UI is short and fixed-height, so it's centered within the
+            row for visual balance. The test panel is the one that can run
+            long, so it stays top-anchored and scrolls internally instead —
+            centering both would leave the shorter one floating oddly and
+            centering neither leaves a dead gap under the short one. */}
+        <div className="flex-1 min-w-0 flex items-center justify-center">{content}</div>
+        <div className="lg:w-96 lg:shrink-0 flex flex-col lg:min-h-0">
+          <TestDetailsPanel testCase={testCase} accentClass={MODE_TEXT_COLORS[mode]} />
+        </div>
+      </div>
+    );
+  }
+
   // Ringing screen
   if (phase === "mic-check" || phase === "ringing") {
-    return (
+    return withTestPanel(
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
         {/* Ringing animation */}
         <div className="relative">
@@ -297,7 +330,7 @@ export default function CallScreen({
           <button
             onClick={handlePickup}
             disabled={connecting}
-            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-full font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed animate-bounce-slow"
+            className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-full font-medium shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed animate-bounce-slow"
           >
             <Phone size={20} />
             {connecting ? "Connecting..." : "Pick Up"}
@@ -308,7 +341,7 @@ export default function CallScreen({
   }
 
   // Connected / ended screen
-  return (
+  return withTestPanel(
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
       {/* Audio visualizer */}
       <div className="relative">
@@ -359,7 +392,7 @@ export default function CallScreen({
       {callId && (
         <button
           onClick={copyCallId}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-mono text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
+          className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-xs font-mono text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {callId}
@@ -371,7 +404,7 @@ export default function CallScreen({
         <div className="flex items-center gap-4">
           <button
             onClick={toggleMute}
-            className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors ${
+            className={`w-14 h-14 rounded-full flex items-center justify-center shadow-sm hover:shadow-md transition-all ${
               muted
                 ? "bg-red-100 dark:bg-red-900/30 text-red-600"
                 : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
@@ -381,7 +414,7 @@ export default function CallScreen({
           </button>
           <button
             onClick={endCall}
-            className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center text-white transition-colors"
+            className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center text-white shadow-sm hover:shadow-md transition-all"
           >
             <PhoneOff size={22} />
           </button>
@@ -390,7 +423,7 @@ export default function CallScreen({
 
       {/* Post-call grade + note */}
       {phase === "ended" && callId && (
-        <div className="w-full max-w-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 space-y-3">
+        <div className="w-full max-w-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-sm p-5 space-y-3">
           <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
             Rate this call{grade ? ` · ${grade}/10` : ""}
           </p>
@@ -400,7 +433,7 @@ export default function CallScreen({
             onChange={(e) => setNote(e.target.value)}
             placeholder="Add a note about this call..."
             rows={2}
-            className="w-full text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
+            className="w-full text-sm rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3.5 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
           />
         </div>
       )}
@@ -410,7 +443,7 @@ export default function CallScreen({
         <div className="flex items-center gap-3">
           <button
             onClick={handleBack}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-900 hover:shadow-sm transition-all"
           >
             <ArrowLeft size={16} />
             New Call
@@ -419,7 +452,7 @@ export default function CallScreen({
             <>
               <button
                 onClick={() => setShowViewer(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm transition-colors"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm shadow-sm hover:shadow-md transition-all"
               >
                 <Eye size={16} />
                 View Details
@@ -427,7 +460,7 @@ export default function CallScreen({
               <button
                 onClick={downloadMetadata}
                 disabled={downloading}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-zinc-300 dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-900 hover:shadow-sm transition-all disabled:opacity-50"
               >
                 <Download size={16} />
                 {downloading ? "Downloading..." : "Download"}
