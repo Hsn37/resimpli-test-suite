@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Download, Loader2, Copy, Check, Pencil } from "lucide-react";
+import { X, Download, Loader2, Copy, Check, Pencil, Share2 } from "lucide-react";
 import { useToast } from "./Toast";
 import { patchCallGrade, gradeCall } from "@/lib/callLog";
 import type { CallRowGrade } from "@/lib/callGrade";
@@ -10,6 +10,8 @@ import CallDetailBody, {
   type CallDetailTab,
 } from "./CallDetailBody";
 import Stars from "./Stars";
+import { sharePath } from "./CallsTable";
+import { downloadRecording } from "@/lib/downloadRecording";
 
 interface Props {
   callId: string;
@@ -38,6 +40,7 @@ export default function CallViewer({
   const [editGrade, setEditGrade] = useState(0);
   const [editNote, setEditNote] = useState("");
   const [grading, setGrading] = useState(false);
+  const [shared, setShared] = useState(false);
   const { toast } = useToast();
 
   // Lock background scroll while the modal is open so the page behind the
@@ -69,6 +72,14 @@ export default function CallViewer({
     navigator.clipboard.writeText(callId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+
+  function handleShare() {
+    const url = `${window.location.origin}${sharePath(callId)}`;
+    navigator.clipboard.writeText(url);
+    setShared(true);
+    toast("Share link copied to clipboard", "success");
+    setTimeout(() => setShared(false), 2000);
   }
 
   function startEdit() {
@@ -106,6 +117,7 @@ export default function CallViewer({
 
   const agentName = data?.agent_name as string | undefined;
   const userEmail = data?.user_email as string | null | undefined;
+  const recordingUrl = data?.recording_url as string | undefined;
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -127,11 +139,26 @@ export default function CallViewer({
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={handleShare}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
+            >
+              {shared ? <Check size={14} /> : <Share2 size={14} />}
+              Share
+            </button>
+            <button
               onClick={() => onDownload(callId)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors"
             >
               <Download size={14} />
-              Download
+              JSON
+            </button>
+            <button
+              onClick={() => recordingUrl && downloadRecording(recordingUrl, callId)}
+              disabled={!recordingUrl}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download size={14} />
+              Audio
             </button>
             <button
               onClick={onClose}
