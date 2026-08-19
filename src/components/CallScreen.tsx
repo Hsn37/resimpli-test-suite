@@ -290,13 +290,15 @@ export default function CallScreen({
   function withTestPanel(content: React.ReactNode) {
     if (!testCase) return content;
     return (
-      <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-8rem)] lg:min-h-0 max-w-5xl mx-auto">
-        {/* The call UI is short and fixed-height, so it's centered within the
-            row for visual balance. The test panel is the one that can run
-            long, so it stays top-anchored and scrolls internally instead —
-            centering both would leave the shorter one floating oddly and
-            centering neither leaves a dead gap under the short one. */}
-        <div className="flex-1 min-w-0 flex items-center justify-center">{content}</div>
+      <div className="flex flex-col lg:flex-row lg:justify-center gap-6 lg:h-[calc(100vh-8rem)] lg:min-h-0 max-w-5xl mx-auto">
+        {/* Fixed-width, matching the test panel's column (384px = the widest
+            thing in the call UI, the max-w-sm rate-call card) instead of
+            flex-1 — a flex-1 column centers its content within extra space
+            on BOTH sides, but only the left side reads as a visible gap
+            since the right side just blends into the gap-6 before the next
+            column. Fixed + matched widths + centering the pair as a unit
+            keeps both columns flush to their own content on all sides. */}
+        <div className="lg:w-96 lg:shrink-0 flex items-center justify-center">{content}</div>
         <div className="lg:w-96 lg:shrink-0 flex flex-col lg:min-h-0">
           <TestDetailsPanel testCase={testCase} accentClass={MODE_TEXT_COLORS[mode]} />
         </div>
