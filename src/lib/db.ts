@@ -9,7 +9,7 @@ import {
   DEFAULT_APP_CONFIG,
   type RubricEntry,
 } from "./graderRubric";
-import { WORKSPACES, type Workspace } from "./workspace";
+import { WORKSPACES, isWorkspace, type Workspace } from "./workspace";
 
 // Workspace tag stamped onto legacy call_logs / agent_settings rows that predate
 // the workspace dimension. Pinned to "dev": under Boss's corrected model (Build 9)
@@ -521,6 +521,41 @@ export async function getCallLogsByIds(
     }
   }
   return map;
+}
+
+/**
+ * Which workspace actually owns a given Retell call_id, independent of the
+ * caller's own active workspace — used by the /share/[id] flow so a link
+ * shared from one workspace still resolves correctly for a viewer whose
+ * active workspace is different. Checks `call_logs` (any workspace, calls
+ * placed via this app's Test Call flow) and `calls` (dev/prod calls pulled
+ * in by the dashboard ingestion pipeline). Returns null if the call_id isn't
+ * in either — e.g. a brand-new call not yet ingested/logged anywhere,
+ * outbound/stl calls only live in Retell since those workspaces have no
+ * ingestion pipeline — the caller should fall back to its own workspace.
+ */
+export async function getCallWorkspaceOwner(callId: string): Promise<Workspace | null> {
+  const db = await getDb();
+
+  const logResult = await db.execute({
+    sql: `SELECT workspace FROM call_logs WHERE call_id = ?`,
+    args: [callId],
+  });
+  if (logResult.rows.length > 0) {
+    const ws = logResult.rows[0].workspace;
+    if (isWorkspace(ws)) return ws;
+  }
+
+  const callsResult = await db.execute({
+    sql: `SELECT workspace FROM calls WHERE retell_call_id = ? LIMIT 1`,
+    args: [callId],
+  });
+  if (callsResult.rows.length > 0) {
+    const ws = callsResult.rows[0].workspace;
+    if (isWorkspace(ws)) return ws;
+  }
+
+  return null;
 }
 
 /** Fetch a user's most recent call logs in a workspace, newest first. */

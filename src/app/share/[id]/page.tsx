@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
-import { Loader2, Phone, Copy, Check, Download } from "lucide-react";
+import { Loader2, Phone, Copy, Check, Download, Shield } from "lucide-react";
 import { ToastProvider, useToast } from "@/components/Toast";
 import AudioPlayer from "@/components/AudioPlayer";
 import Stars from "@/components/Stars";
@@ -18,6 +18,7 @@ interface Props {
 function ShareContent({ callId }: { callId: string }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [tab, setTab] = useState<CallDetailTab>("transcript");
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
@@ -25,7 +26,10 @@ function ShareContent({ callId }: { callId: string }) {
   useEffect(() => {
     fetch(`/api/calls/${callId}`)
       .then((res) => {
-        if (!res.ok) throw new Error("Failed to fetch call");
+        if (!res.ok) {
+          setErrorStatus(res.status);
+          throw new Error("Failed to fetch call");
+        }
         return res.json();
       })
       .then(setData)
@@ -75,9 +79,18 @@ function ShareContent({ callId }: { callId: string }) {
           <Loader2 className="animate-spin text-zinc-400" size={28} />
         </div>
       ) : !data ? (
-        <div className="text-center py-20 text-zinc-500 text-sm">
-          Failed to load call data. The link may be invalid or expired.
-        </div>
+        errorStatus === 403 ? (
+          <div className="text-center py-20">
+            <Shield size={48} className="mx-auto text-zinc-300 mb-4" />
+            <p className="text-zinc-500">
+              You don&apos;t have access to the workspace this call belongs to.
+            </p>
+          </div>
+        ) : (
+          <div className="text-center py-20 text-zinc-500 text-sm">
+            Failed to load call data. The link may be invalid or expired.
+          </div>
+        )
       ) : (
         <>
           {startTimestamp && (

@@ -2,13 +2,20 @@
 
 import { useState } from "react";
 import { useUser } from "@clerk/nextjs";
+import { Phone } from "lucide-react";
 import { ToastProvider } from "@/components/Toast";
 import AgentSelect from "@/components/AgentSelect";
 import CallSetup from "@/components/CallSetup";
 import CallScreen from "@/components/CallScreen";
-import { ALL_AGENTS_TAG, type CallMode } from "@/lib/presets";
+import { ALL_AGENTS_TAG, type CallMode, type TestPreset } from "@/lib/presets";
 
 type Screen = "agent-select" | "call-setup" | "call";
+
+const STEPS: { key: Screen; label: string }[] = [
+  { key: "agent-select", label: "Agent" },
+  { key: "call-setup", label: "Setup" },
+  { key: "call", label: "Call" },
+];
 
 interface CallConfig {
   agentId: string;
@@ -16,6 +23,7 @@ interface CallConfig {
   version?: number;
   mode: CallMode;
   variables: Record<string, string>;
+  testCase: TestPreset | null;
 }
 
 function TestCallContent() {
@@ -38,8 +46,12 @@ function TestCallContent() {
     setScreen("call-setup");
   }
 
-  function handleStartCall(mode: CallMode, variables: Record<string, string>) {
-    setCallConfig({ agentId, agentName, version, mode, variables });
+  function handleStartCall(
+    mode: CallMode,
+    variables: Record<string, string>,
+    testCase: TestPreset | null
+  ) {
+    setCallConfig({ agentId, agentName, version, mode, variables, testCase });
     setScreen("call");
   }
 
@@ -49,6 +61,36 @@ function TestCallContent() {
 
   return (
     <div className="p-8">
+      <div className="max-w-5xl mx-auto flex items-center gap-3 mb-8">
+        <h1 className="font-semibold text-lg flex items-center gap-2 flex-1">
+          <Phone size={18} />
+          Test Call
+        </h1>
+        <div className="flex items-center gap-1.5 text-xs">
+          {STEPS.map((step, i) => {
+            const stepIndex = STEPS.findIndex((s) => s.key === screen);
+            const isActive = step.key === screen;
+            const isDone = i < stepIndex;
+            return (
+              <div key={step.key} className="flex items-center gap-1.5">
+                {i > 0 && <span className="text-zinc-300 dark:text-zinc-700">/</span>}
+                <span
+                  className={
+                    isActive
+                      ? "font-semibold text-zinc-900 dark:text-zinc-100"
+                      : isDone
+                        ? "text-zinc-500"
+                        : "text-zinc-300 dark:text-zinc-700"
+                  }
+                >
+                  {step.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {screen === "agent-select" && (
         <AgentSelect onSelect={handleAgentSelect} />
       )}
@@ -69,6 +111,7 @@ function TestCallContent() {
           version={callConfig.version}
           mode={callConfig.mode}
           variables={callConfig.variables}
+          testCase={callConfig.testCase}
           userEmail={user?.emailAddresses[0]?.emailAddress ?? ""}
           onBack={handleCallBack}
         />

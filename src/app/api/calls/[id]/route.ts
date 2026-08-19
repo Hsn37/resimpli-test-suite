@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAgent, getCall } from "@/lib/retell";
-import { getCallGradesByIds, getCallLogsByIds, type CallGrade } from "@/lib/db";
-import { getServerWorkspace, retellKeyForWorkspace } from "@/lib/workspaceServer";
+import { getCallGradesByIds, getCallLogsByIds, getCallWorkspaceOwner, type CallGrade } from "@/lib/db";
+import { getServerWorkspace, isWorkspaceAuthorized, retellKeyForWorkspace } from "@/lib/workspaceServer";
 import { scoreToStars } from "@/lib/grade";
 import { gradeRetellCall } from "@/lib/grading";
 
@@ -14,7 +14,28 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const workspace = await getServerWorkspace();
+
+    // Resolve the call's actual owning workspace from our own records first —
+    // independent of the viewer's currently active workspace. This is what
+    // makes a shared link work when opened by someone whose active workspace
+    // differs from the one the call was shared from; without it, the call
+    // gets looked up against the wrong Retell account and 404s there.
+    // Falls back to the viewer's own workspace when we have no record of
+    // this call yet (e.g. one just placed, not yet ingested/logged).
+    const owningWorkspace = await getCallWorkspaceOwner(id);
+    const sessionWorkspace = await getServerWorkspace();
+
+    let workspace = sessionWorkspace;
+    if (owningWorkspace && owningWorkspace !== sessionWorkspace) {
+      if (!(await isWorkspaceAuthorized(owningWorkspace))) {
+        return NextResponse.json(
+          { error: "You don't have access to this call's workspace" },
+          { status: 403 }
+        );
+      }
+      workspace = owningWorkspace;
+    }
+
     const apiKey = retellKeyForWorkspace(workspace);
     const call = await getCall(id, apiKey);
 

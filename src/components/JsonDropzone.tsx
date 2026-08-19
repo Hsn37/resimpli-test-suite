@@ -51,7 +51,7 @@ export default function JsonDropzone({ onDrop }: Props) {
         const file = e.dataTransfer.files[0];
         if (file) handleFile(file);
       }}
-      className={`border border-dashed rounded-lg px-3 py-2 transition-colors cursor-pointer shrink-0 ${
+      className={`border border-dashed rounded-xl px-3.5 py-3 transition-colors cursor-pointer shrink-0 ${
         dragging
           ? "border-blue-500 bg-blue-500/10"
           : "border-zinc-300 dark:border-zinc-700 hover:border-zinc-400"
