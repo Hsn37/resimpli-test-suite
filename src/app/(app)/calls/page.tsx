@@ -15,7 +15,9 @@ import {
 import { ToastProvider, useToast } from "@/components/Toast";
 import CallViewer from "@/components/CallViewer";
 import CallsTable, { type CallRowData, sharePath } from "@/components/CallsTable";
+import { useWorkspace } from "@/components/WorkspaceProvider";
 import type { CallRowGrade } from "@/lib/callGrade";
+import type { Workspace } from "@/lib/workspace";
 import {
   downloadCsv,
   downloadJson,
@@ -101,7 +103,8 @@ function detailToExportFields(data: Record<string, unknown>): ExportDetail {
 // One CSV data row in CSV_COLUMNS order. Escaping is handled by downloadCsv.
 function callToCsvRow(
   call: CallRowData,
-  detail: ExportDetail
+  detail: ExportDetail,
+  workspace: Workspace
 ): (string | number)[] {
   const duration =
     call.start_timestamp && call.end_timestamp
@@ -123,7 +126,7 @@ function callToCsvRow(
     call.from_number ?? "",
     call.to_number ?? "",
     call.recording_url ?? "",
-    `${window.location.origin}${sharePath(call.call_id)}`,
+    `${window.location.origin}${sharePath(call.call_id, workspace)}`,
     detail.variables,
     detail.transcript,
   ];
@@ -171,6 +174,7 @@ function CallsContent() {
   // True while auto-fetching a searched call ID that isn't in the loaded window.
   const [lookupBusy, setLookupBusy] = useState(false);
   const { toast } = useToast();
+  const { workspace } = useWorkspace();
 
   // Export the in-memory calls within the chosen date range to CSV. Excludes
   // ungraded/empty calls unless "Include empty / ungraded calls" is checked.
@@ -203,7 +207,11 @@ function CallsContent() {
       [
         [...CSV_COLUMNS],
         ...selected.map((c) =>
-          callToCsvRow(c, detailToExportFields(c as unknown as Record<string, unknown>))
+          callToCsvRow(
+            c,
+            detailToExportFields(c as unknown as Record<string, unknown>),
+            workspace
+          )
         ),
       ],
       `${filename}.csv`

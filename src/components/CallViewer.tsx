@@ -12,6 +12,7 @@ import CallDetailBody, {
 import Stars from "./Stars";
 import { sharePath } from "./CallsTable";
 import { downloadRecording } from "@/lib/downloadRecording";
+import { useWorkspace } from "./WorkspaceProvider";
 
 interface Props {
   callId: string;
@@ -42,6 +43,7 @@ export default function CallViewer({
   const [grading, setGrading] = useState(false);
   const [shared, setShared] = useState(false);
   const { toast } = useToast();
+  const { workspace } = useWorkspace();
 
   // Lock background scroll while the modal is open so the page behind the
   // overlay can't scroll (incl. wheel chaining when the modal scroll bottoms out).
@@ -75,7 +77,7 @@ export default function CallViewer({
   }
 
   function handleShare() {
-    const url = `${window.location.origin}${sharePath(callId)}`;
+    const url = `${window.location.origin}${sharePath(callId, workspace)}`;
     navigator.clipboard.writeText(url);
     setShared(true);
     toast("Share link copied to clipboard", "success");
