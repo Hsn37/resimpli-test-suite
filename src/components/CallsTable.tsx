@@ -19,6 +19,8 @@ import { gradeCall } from "@/lib/callLog";
 import { gradeBand, gradeBandClasses, CALLOUT_TEXT } from "@/lib/dashboard";
 import type { CallRowGrade } from "@/lib/callGrade";
 import { downloadRecording } from "@/lib/downloadRecording";
+import { useWorkspace } from "@/components/WorkspaceProvider";
+import type { Workspace } from "@/lib/workspace";
 
 // One row of the shared calls table. Both /calls (Retell list) and the
 // dashboard (ingested `calls`) map their data into this shape so the two
@@ -50,10 +52,14 @@ const SCORE_CHIP =
   "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums";
 
 // Shared `/share/<id>` path builder so the row Share button and the CSV export
-// produce identical links. Caller prefixes window.location.origin.
+// produce identical links. Caller prefixes window.location.origin. The
+// workspace the call was viewed under is embedded as a query param so the
+// link resolves correctly for a viewer whose active workspace differs —
+// outbound/stl calls have no DB record to derive this from server-side (see
+// getCallWorkspaceOwner), so the URL is the only reliable source of truth.
 export const SHARE_PATH_PREFIX = "/share";
-export function sharePath(callId: string): string {
-  return `${SHARE_PATH_PREFIX}/${callId}`;
+export function sharePath(callId: string, workspace: Workspace): string {
+  return `${SHARE_PATH_PREFIX}/${callId}?ws=${workspace}`;
 }
 
 // Number of <td> columns in a CallRow (used by the expanded audio row's colSpan).
@@ -145,6 +151,7 @@ function CallRow({
   const [shared, setShared] = useState(false);
   const [grading, setGrading] = useState(false);
   const { toast } = useToast();
+  const { workspace } = useWorkspace();
 
   async function handleGradeCall(e: MouseEvent) {
     e.stopPropagation();
@@ -175,7 +182,7 @@ function CallRow({
   }
 
   function handleShare() {
-    const url = `${window.location.origin}${sharePath(call.call_id)}`;
+    const url = `${window.location.origin}${sharePath(call.call_id, workspace)}`;
     navigator.clipboard.writeText(url);
     setShared(true);
     toast("Share link copied to clipboard", "success");

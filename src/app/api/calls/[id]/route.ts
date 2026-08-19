@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAgent, getCall } from "@/lib/retell";
 import { getCallGradesByIds, getCallLogsByIds, getCallWorkspaceOwner, type CallGrade } from "@/lib/db";
 import { getServerWorkspace, isWorkspaceAuthorized, retellKeyForWorkspace } from "@/lib/workspaceServer";
+import { isWorkspace } from "@/lib/workspace";
 import { scoreToStars } from "@/lib/grade";
 import { gradeRetellCall } from "@/lib/grading";
 
@@ -9,20 +10,24 @@ import { gradeRetellCall } from "@/lib/grading";
 export const maxDuration = 30;
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
 
-    // Resolve the call's actual owning workspace from our own records first —
-    // independent of the viewer's currently active workspace. This is what
-    // makes a shared link work when opened by someone whose active workspace
-    // differs from the one the call was shared from; without it, the call
-    // gets looked up against the wrong Retell account and 404s there.
-    // Falls back to the viewer's own workspace when we have no record of
-    // this call yet (e.g. one just placed, not yet ingested/logged).
-    const owningWorkspace = await getCallWorkspaceOwner(id);
+    // Resolve the call's actual owning workspace, independent of the
+    // viewer's currently active workspace — this is what makes a shared
+    // link work when opened by someone whose active workspace differs from
+    // the one it was shared from. The `ws` query param (stamped into the
+    // link at share time — see sharePath()) is the primary source: outbound
+    // and stl have no ingestion pipeline, so a real production call there
+    // usually has no DB row to derive this from otherwise. Older links
+    // without the param fall back to the DB lookup.
+    const requestedWs = new URL(request.url).searchParams.get("ws");
+    const owningWorkspace = isWorkspace(requestedWs)
+      ? requestedWs
+      : await getCallWorkspaceOwner(id);
     const sessionWorkspace = await getServerWorkspace();
 
     let workspace = sessionWorkspace;

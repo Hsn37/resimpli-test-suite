@@ -24,7 +24,15 @@ function ShareContent({ callId }: { callId: string }) {
   const { toast } = useToast();
 
   useEffect(() => {
-    fetch(`/api/calls/${callId}`)
+    // The workspace the call was shared from travels in the link's own `ws`
+    // query param (see sharePath()) — forward it so the API resolves the
+    // call against its true workspace, not whatever the viewer's session
+    // happens to be on.
+    const ws = new URLSearchParams(window.location.search).get("ws");
+    const url = ws
+      ? `/api/calls/${callId}?ws=${encodeURIComponent(ws)}`
+      : `/api/calls/${callId}`;
+    fetch(url)
       .then((res) => {
         if (!res.ok) {
           setErrorStatus(res.status);
