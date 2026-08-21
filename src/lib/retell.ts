@@ -11,14 +11,23 @@ function headers(apiKey: string): HeadersInit {
   };
 }
 
+// /list-agents returns only 100 agents unless an explicit limit is passed, and
+// its pagination_key errors out, so the limit is the only way to get a full
+// list. Workspaces are already at ~900-1000 agents; anything past the cap
+// silently vanishes from agent pickers and id -> name lookups.
+const AGENT_LIST_LIMIT = 5000;
+
 export async function listAgents(apiKey: string) {
   // is_latest=true returns one entry per agent (its latest version). Without
   // it, /list-agents returns every version, so name lookups can resolve to a
   // stale pre-rename name depending on which version is read last.
-  const res = await fetch(`${RETELL_BASE_URL}/list-agents?is_latest=true`, {
-    method: "GET",
-    headers: headers(apiKey),
-  });
+  const res = await fetch(
+    `${RETELL_BASE_URL}/list-agents?is_latest=true&limit=${AGENT_LIST_LIMIT}`,
+    {
+      method: "GET",
+      headers: headers(apiKey),
+    }
+  );
   if (!res.ok) throw new Error(`Retell API error: ${res.status}`);
   return res.json();
 }

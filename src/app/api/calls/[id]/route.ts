@@ -44,13 +44,16 @@ export async function GET(
     const apiKey = retellKeyForWorkspace(workspace);
     const call = await getCall(id, apiKey);
 
-    let agentName: string | null = null;
+    // Retell stamps the agent name on the call at call time; getAgent gives the
+    // current one (so a rename shows through). Start from the stamped name so a
+    // deleted or unreadable agent still leaves the call labeled.
+    let agentName: string | null = call.agent_name ?? null;
     if (call.agent_id) {
       try {
         const agent = await getAgent(call.agent_id, apiKey);
-        agentName = agent.agent_name ?? null;
+        agentName = agent.agent_name ?? agentName;
       } catch {
-        agentName = null;
+        // Keep the stamped name.
       }
     }
 

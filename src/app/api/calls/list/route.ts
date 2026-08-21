@@ -130,7 +130,14 @@ export async function GET(request: Request) {
       const grade = log?.grade != null ? scoreToStars(log.grade) : null;
       return {
         ...call,
-        agent_name: agentNames.get(call.agent_id as string) ?? null,
+        // Prefer the agent's current name (so a rename shows through); fall
+        // back to the name Retell stamped on the call itself, which is always
+        // present and keeps the row labeled if the agent is missing from
+        // /list-agents (deleted, or beyond the endpoint's cap).
+        agent_name:
+          agentNames.get(call.agent_id as string) ??
+          (call.agent_name as string | undefined) ??
+          null,
         grade,
         note: log?.note ?? null,
         user_email: log?.user_email ?? metaUser ?? null,
