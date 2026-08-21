@@ -5,6 +5,7 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Download,
   FileDown,
   Loader2,
@@ -58,6 +59,20 @@ function isExportableByDefault(call: CallRowData): boolean {
     call.grade != null || call.rep_score != null || call.grade100 != null;
   return isGraded && !!call.recording_url;
 }
+
+function callDurationSeconds(call: CallRowData): number | null {
+  return call.start_timestamp && call.end_timestamp
+    ? Math.round((call.end_timestamp - call.start_timestamp) / 1000)
+    : null;
+}
+
+// Preset duration buckets for the quick-pick chips (seconds; null = open-ended).
+const DURATION_PRESETS: { label: string; min: number | null; max: number | null }[] = [
+  { label: "<1 min", min: null, max: 59 },
+  { label: "1-3 min", min: 60, max: 180 },
+  { label: "3-5 min", min: 180, max: 300 },
+  { label: "5+ min", min: 300, max: null },
+];
 
 // Inclusive date-range test over a call's start_timestamp. Calls without a
 // start_timestamp are skipped only when a bound is set.
@@ -171,6 +186,15 @@ function CallsContent() {
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [range, setRange] = useState<{ from: string; to: string } | null>(null);
+  // Duration filter (seconds). Empty string = no bound on that side. Presets
+  // set a range (min/max differ); the exact minutes/seconds inputs set both
+  // to the same target, so "duration === exact" falls out of the same
+  // min <= dur <= max check as the range presets.
+  const [durationOpen, setDurationOpen] = useState(false);
+  const [durationMin, setDurationMin] = useState("");
+  const [durationMax, setDurationMax] = useState("");
+  const [exactMinutes, setExactMinutes] = useState("");
+  const [exactSeconds, setExactSeconds] = useState("");
   // True while auto-fetching a searched call ID that isn't in the loaded window.
   const [lookupBusy, setLookupBusy] = useState(false);
   const { toast } = useToast();
@@ -332,6 +356,39 @@ function CallsContent() {
     }
   }
 
+  function clearDuration() {
+    setDurationMin("");
+    setDurationMax("");
+    setExactMinutes("");
+    setExactSeconds("");
+    setPage(1);
+  }
+
+  // Recomputes the exact target duration from the minutes/seconds fields
+  // whenever either changes, setting min === max so the range filter matches
+  // only that exact length.
+  function applyExactDuration(minutesStr: string, secondsStr: string) {
+    setExactMinutes(minutesStr);
+    setExactSeconds(secondsStr);
+    if (!minutesStr.trim() && !secondsStr.trim()) {
+      setDurationMin("");
+      setDurationMax("");
+    } else {
+      const total = (Number(minutesStr) || 0) * 60 + (Number(secondsStr) || 0);
+      setDurationMin(String(total));
+      setDurationMax(String(total));
+    }
+    setPage(1);
+  }
+
+  function formatDuration(totalSeconds: number): string {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    if (mins === 0) return `${secs}s`;
+    if (secs === 0) return `${mins}m`;
+    return `${mins}m ${secs}s`;
+  }
+
   // Drop range mode and reload the default recent window.
   async function clearRange() {
     setLoading(true);
@@ -378,16 +435,29 @@ function CallsContent() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const minSec = durationMin.trim() ? Number(durationMin) : null;
+    const maxSec = durationMax.trim() ? Number(durationMax) : null;
+    // Phone numbers come back from Retell unformatted (e.g. "+17402810699"),
+    // but people search using however they have the number saved — with
+    // parens/dashes/spaces, with or without the country code. Compare
+    // digits-only on both sides so punctuation never breaks the match.
+    const qDigits = q.replace(/\D/g, "");
     let result = calls.filter((c) => {
       if (userFilter !== "all" && c.user_email !== userFilter) return false;
+      if (minSec !== null || maxSec !== null) {
+        const dur = callDurationSeconds(c);
+        if (dur === null) return false;
+        if (minSec !== null && dur < minSec) return false;
+        if (maxSec !== null && dur > maxSec) return false;
+      }
       if (!q) return true;
       return (
         c.call_id.toLowerCase().includes(q) ||
         c.agent_id?.toLowerCase().includes(q) ||
         c.agent_name?.toLowerCase().includes(q) ||
         c.call_type?.toLowerCase().includes(q) ||
-        c.from_number?.toLowerCase().includes(q) ||
-        c.to_number?.toLowerCase().includes(q) ||
+        (qDigits.length > 0 && c.from_number?.replace(/\D/g, "").includes(qDigits)) ||
+        (qDigits.length > 0 && c.to_number?.replace(/\D/g, "").includes(qDigits)) ||
         c.user_email?.toLowerCase().includes(q) ||
         c.note?.toLowerCase().includes(q)
       );
@@ -407,9 +477,14 @@ function CallsContent() {
     }
 
     return result;
-  }, [calls, search, userFilter, sort]);
+  }, [calls, search, userFilter, sort, durationMin, durationMax]);
 
-  const isFiltering = search.trim() !== "" || userFilter !== "all" || sort !== "newest";
+  const isFiltering =
+    search.trim() !== "" ||
+    userFilter !== "all" ||
+    sort !== "newest" ||
+    durationMin.trim() !== "" ||
+    durationMax.trim() !== "";
   const isCallIdQuery = CALL_ID_RE.test(search.trim());
 
   // Paginate the filtered/sorted set, so pages reflect the active filters.
@@ -437,6 +512,23 @@ function CallsContent() {
             <button
               onClick={clearRange}
               aria-label="Clear date range"
+              className="hover:text-blue-900 dark:hover:text-blue-100"
+            >
+              <X size={13} />
+            </button>
+          </span>
+        )}
+        {(durationMin.trim() || durationMax.trim()) && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300">
+            <Clock size={12} />
+            {durationMin === durationMax
+              ? formatDuration(Number(durationMin))
+              : `${durationMin.trim() ? formatDuration(Number(durationMin)) : "0s"} – ${
+                  durationMax.trim() ? formatDuration(Number(durationMax)) : "∞"
+                }`}
+            <button
+              onClick={clearDuration}
+              aria-label="Clear duration filter"
               className="hover:text-blue-900 dark:hover:text-blue-100"
             >
               <X size={13} />
@@ -515,6 +607,97 @@ function CallsContent() {
             <option value="rating-asc">Rating: low to high</option>
           </select>
         </label>
+
+        <div className="relative">
+          <button
+            onClick={() => setDurationOpen((o) => !o)}
+            className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+              durationMin.trim() || durationMax.trim()
+                ? "border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30"
+                : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            }`}
+          >
+            <Clock size={15} />
+            Duration
+          </button>
+          {durationOpen && (
+            <>
+              <button
+                type="button"
+                aria-label="Close duration filter"
+                onClick={() => setDurationOpen(false)}
+                className="fixed inset-0 z-10 cursor-default"
+              />
+              <div className="absolute right-0 z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 shadow-lg space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {DURATION_PRESETS.map((preset) => {
+                    const active =
+                      durationMin === (preset.min?.toString() ?? "") &&
+                      durationMax === (preset.max?.toString() ?? "");
+                    return (
+                      <button
+                        key={preset.label}
+                        onClick={() => {
+                          setDurationMin(preset.min?.toString() ?? "");
+                          setDurationMax(preset.max?.toString() ?? "");
+                          setExactMinutes("");
+                          setExactSeconds("");
+                          setPage(1);
+                        }}
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+                          active
+                            ? "bg-blue-600 text-white"
+                            : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-zinc-500">Exact duration</label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="flex flex-1 items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        value={exactMinutes}
+                        onChange={(e) => applyExactDuration(e.target.value, exactSeconds)}
+                        placeholder="0"
+                        aria-label="Minutes"
+                        className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
+                      />
+                      <span className="text-xs text-zinc-400 shrink-0">min</span>
+                    </div>
+                    <div className="flex flex-1 items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        max={59}
+                        value={exactSeconds}
+                        onChange={(e) => applyExactDuration(exactMinutes, e.target.value)}
+                        placeholder="0"
+                        aria-label="Seconds"
+                        className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-zinc-400"
+                      />
+                      <span className="text-xs text-zinc-400 shrink-0">sec</span>
+                    </div>
+                  </div>
+                </div>
+                {(durationMin.trim() || durationMax.trim()) && (
+                  <button
+                    onClick={clearDuration}
+                    className="w-full flex items-center justify-center gap-2 rounded-lg border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                  >
+                    <X size={15} />
+                    Clear
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="relative">
           <button
