@@ -102,6 +102,7 @@ function TestCallContent() {
           onBack={() => setScreen("agent-select")}
           initialMode={callConfig?.mode}
           initialVariables={callConfig?.variables}
+          initialTestCase={callConfig?.testCase}
         />
       )}
       {screen === "call" && callConfig && (

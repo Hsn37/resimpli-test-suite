@@ -83,6 +83,7 @@ interface Props {
   onBack: () => void;
   initialMode?: CallMode;
   initialVariables?: Record<string, string>;
+  initialTestCase?: TestPreset | null;
 }
 
 export default function CallSetup({
@@ -92,6 +93,7 @@ export default function CallSetup({
   onBack,
   initialMode,
   initialVariables,
+  initialTestCase,
 }: Props) {
   // agentTag arrives synchronously as a prop (resolved before this component
   // ever mounts, see AgentSelect), so the tag-implied mode can be computed up
@@ -103,7 +105,9 @@ export default function CallSetup({
     const initialCallMode = initialMode ?? TAG_TO_MODE[agentTag];
     return initialVariables ?? (initialCallMode ? { call_type: CALL_MODES[initialCallMode].callType } : {});
   });
-  const [selectedTest, setSelectedTest] = useState<TestPreset | null>(null);
+  const [selectedTest, setSelectedTest] = useState<TestPreset | null>(
+    initialTestCase ?? null
+  );
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const presetMenuRef = useRef<HTMLDivElement>(null);
 
