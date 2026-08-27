@@ -288,7 +288,7 @@ export default function CallScreen({
   // Bounded to the same viewport budget as CallSetup's layout so only the
   // test-details column scrolls internally — the page itself never does.
   function withTestPanel(content: React.ReactNode) {
-    if (!testCase) return content;
+    if (!testCase && Object.keys(variables).length === 0) return content;
     return (
       <div className="flex flex-col lg:flex-row lg:justify-center gap-6 lg:h-[calc(100vh-8rem)] lg:min-h-0 max-w-5xl mx-auto">
         {/* Fixed-width, matching the test panel's column (384px = the widest
@@ -300,7 +300,11 @@ export default function CallScreen({
             keeps both columns flush to their own content on all sides. */}
         <div className="lg:w-96 lg:shrink-0 flex items-center justify-center">{content}</div>
         <div className="lg:w-96 lg:shrink-0 flex flex-col lg:min-h-0">
-          <TestDetailsPanel testCase={testCase} accentClass={MODE_TEXT_COLORS[mode]} />
+          <TestDetailsPanel
+            testCase={testCase ?? null}
+            variables={variables}
+            accentClass={MODE_TEXT_COLORS[mode]}
+          />
         </div>
       </div>
     );

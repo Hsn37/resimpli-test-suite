@@ -10,43 +10,79 @@ const PRIORITY_STYLES: Record<string, string> = {
 const CHIP = "text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full";
 
 interface Props {
-  testCase: TestPreset;
+  testCase: TestPreset | null;
+  /** The actual dynamic-variable values sent for this call. Optional —
+   * CallSetup already shows these live in its editable VarEditor, so it
+   * only passes testCase; CallScreen has no other place to show them once
+   * the call starts, so it passes both. */
+  variables?: Record<string, string>;
   accentClass: string;
 }
 
 /** The "what to say / what to expect" reference card for a selected test
  * case — shown while setting up a call and, unchanged, throughout the live
- * call itself so the tester can keep referring to it. */
-export default function TestDetailsPanel({ testCase, accentClass }: Props) {
+ * call itself so the tester can keep referring to it. Also doubles as the
+ * one place the actual variable values used for the call stay visible after
+ * Call Setup, which the caller no longer renders once the call starts. */
+export default function TestDetailsPanel({ testCase, variables, accentClass }: Props) {
+  const varEntries = Object.entries(variables ?? {});
   return (
     <div className="flex flex-col lg:min-h-0">
       <div className="shrink-0 h-5 flex items-center justify-between gap-2 mb-2.5">
         <span className={`text-xs font-bold uppercase tracking-wide ${accentClass}`}>
           Test Details
         </span>
-        <div className="flex items-center gap-1 shrink-0">
-          <span className={`${CHIP} font-bold ${PRIORITY_STYLES[testCase.priority] ?? "bg-zinc-200 dark:bg-zinc-800"}`}>
-            {testCase.priority}
-          </span>
-          {testCase.highRisk && (
-            <span className={`${CHIP} font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400`}>
-              ★ High risk
+        {testCase && (
+          <div className="flex items-center gap-1 shrink-0">
+            <span className={`${CHIP} font-bold ${PRIORITY_STYLES[testCase.priority] ?? "bg-zinc-200 dark:bg-zinc-800"}`}>
+              {testCase.priority}
             </span>
-          )}
-          <span
-            title={`Targets the ${testCase.agentScope} agent`}
-            className={`${CHIP} bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300`}
-          >
-            {testCase.agentScope}
-          </span>
-        </div>
+            {testCase.highRisk && (
+              <span className={`${CHIP} font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400`}>
+                ★ High risk
+              </span>
+            )}
+            <span
+              title={`Targets the ${testCase.agentScope} agent`}
+              className={`${CHIP} bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300`}
+            >
+              {testCase.agentScope}
+            </span>
+          </div>
+        )}
       </div>
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 shadow-sm p-4 text-sm lg:flex-1 lg:overflow-y-auto lg:min-h-0">
-        <div className="font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-          {testCase.name}
-        </div>
+        {testCase ? (
+          <div className="font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
+            {testCase.name}
+          </div>
+        ) : (
+          <div className="text-zinc-400 dark:text-zinc-500 mb-2">No test case selected</div>
+        )}
 
-        {(testCase.agentConfig === "Variant" || testCase.needsLeadProfile) && (
+        {varEntries.length > 0 && (
+          <div className="mb-3">
+            <div className={`text-xs font-bold uppercase tracking-wide mb-1 ${accentClass}`}>
+              Variables
+            </div>
+            <dl className="space-y-0.5">
+              {varEntries.map(([key, value]) => (
+                <div key={key} className="flex gap-1.5 font-mono text-xs">
+                  <dt className="text-zinc-500 shrink-0">{key}:</dt>
+                  <dd className="text-zinc-700 dark:text-zinc-300 break-all">
+                    {value === "" ? (
+                      <span className="italic text-zinc-400">(empty)</span>
+                    ) : (
+                      value
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        )}
+
+        {testCase && (testCase.agentConfig === "Variant" || testCase.needsLeadProfile) && (
           <div className="flex flex-wrap gap-1 mb-3">
             {testCase.agentConfig === "Variant" && (
               <span className={`${CHIP} bg-purple-500/15 text-purple-600 dark:text-purple-400`}>
@@ -61,61 +97,65 @@ export default function TestDetailsPanel({ testCase, accentClass }: Props) {
           </div>
         )}
 
-        {testCase.setup && (
-          <div className="mb-3">
-            <div className="text-xs font-bold uppercase tracking-wide mb-0.5 text-amber-600 dark:text-amber-500">
-              Setup
+        {testCase && (
+          <>
+            {testCase.setup && (
+              <div className="mb-3">
+                <div className="text-xs font-bold uppercase tracking-wide mb-0.5 text-amber-600 dark:text-amber-500">
+                  Setup
+                </div>
+                <p className="text-zinc-700 dark:text-zinc-300">{testCase.setup}</p>
+              </div>
+            )}
+
+            <div className="mb-3">
+              <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
+                Expected outcome
+              </div>
+              <p className="text-zinc-700 dark:text-zinc-300">{testCase.expectedBehavior}</p>
             </div>
-            <p className="text-zinc-700 dark:text-zinc-300">{testCase.setup}</p>
-          </div>
-        )}
 
-        <div className="mb-3">
-          <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
-            Expected outcome
-          </div>
-          <p className="text-zinc-700 dark:text-zinc-300">{testCase.expectedBehavior}</p>
-        </div>
+            {testCase.sample && (
+              <div className="mb-3">
+                <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
+                  Agent should say (sample)
+                </div>
+                <p className="italic text-zinc-600 dark:text-zinc-400 border-l-2 border-zinc-300 dark:border-zinc-700 pl-2">
+                  {testCase.sample}
+                </p>
+              </div>
+            )}
 
-        {testCase.sample && (
-          <div className="mb-3">
-            <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
-              Agent should say (sample)
+            {testCase.userMessages.length > 0 && (
+              <div className="mb-3">
+                <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
+                  What to say, in order
+                </div>
+                <ol className="list-decimal list-inside space-y-0.5 text-zinc-700 dark:text-zinc-300">
+                  {testCase.userMessages.map((m, i) => (
+                    <li key={i}>{m}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {testCase.testerNotes && (
+              <div className="mb-3">
+                <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
+                  Tester notes
+                </div>
+                <p className="text-zinc-600 dark:text-zinc-400">{testCase.testerNotes}</p>
+              </div>
+            )}
+
+            <div>
+              <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
+                Expected path
+              </div>
+              <p className="font-mono text-xs text-zinc-500 break-words">{testCase.expectedPath}</p>
             </div>
-            <p className="italic text-zinc-600 dark:text-zinc-400 border-l-2 border-zinc-300 dark:border-zinc-700 pl-2">
-              {testCase.sample}
-            </p>
-          </div>
+          </>
         )}
-
-        {testCase.userMessages.length > 0 && (
-          <div className="mb-3">
-            <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
-              What to say, in order
-            </div>
-            <ol className="list-decimal list-inside space-y-0.5 text-zinc-700 dark:text-zinc-300">
-              {testCase.userMessages.map((m, i) => (
-                <li key={i}>{m}</li>
-              ))}
-            </ol>
-          </div>
-        )}
-
-        {testCase.testerNotes && (
-          <div className="mb-3">
-            <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
-              Tester notes
-            </div>
-            <p className="text-zinc-600 dark:text-zinc-400">{testCase.testerNotes}</p>
-          </div>
-        )}
-
-        <div>
-          <div className={`text-xs font-bold uppercase tracking-wide mb-0.5 ${accentClass}`}>
-            Expected path
-          </div>
-          <p className="font-mono text-xs text-zinc-500 break-words">{testCase.expectedPath}</p>
-        </div>
       </div>
     </div>
   );
