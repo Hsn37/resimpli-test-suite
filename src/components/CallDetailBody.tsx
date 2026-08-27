@@ -3,6 +3,7 @@
 import { Loader2 } from "lucide-react";
 import TranscriptView from "./TranscriptView";
 import ToolCallCard from "./ToolCallCard";
+import JsonTree from "./JsonTree";
 import Stars from "./Stars";
 import GradeBreakdown, { type CallGradeBreakdown } from "./GradeBreakdown";
 import {
@@ -28,6 +29,20 @@ export const CALL_DETAIL_TABS: { key: CallDetailTab; label: string }[] = [
   { key: "variables", label: "Variables" },
   { key: "raw", label: "Raw JSON" },
 ];
+
+// Fields already rendered in full by their own tab, or too heavy/low-signal
+// to be worth including (access_token is a short-lived WebRTC join token,
+// irrelevant once the call is over) — dropped from Raw JSON so it's the
+// catch-all for everything else instead of a full duplicate dump.
+const RAW_JSON_OMIT_KEYS = new Set([
+  "transcript",
+  "transcript_object",
+  "transcript_with_tool_calls",
+  "tool_calls",
+  "retell_llm_dynamic_variables",
+  "call_analysis",
+  "access_token",
+]);
 
 /**
  * The grade trigger button. Renders nothing when `onGrade` is omitted (e.g. the
@@ -210,9 +225,18 @@ export default function CallDetailBody({
     );
   }
 
+  const rawData = Object.fromEntries(
+    Object.entries(data).filter(([key]) => !RAW_JSON_OMIT_KEYS.has(key))
+  );
   return (
-    <pre className="text-xs font-mono whitespace-pre-wrap break-words text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 overflow-x-auto">
-      {JSON.stringify(data, null, 2)}
-    </pre>
+    <div className="space-y-2">
+      <p className="text-xs text-zinc-400">
+        Transcript, tool calls, analysis, and variables are shown in their own
+        tabs — omitted here to keep this readable.
+      </p>
+      <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 overflow-x-auto">
+        <JsonTree data={rawData} />
+      </div>
+    </div>
   );
 }
