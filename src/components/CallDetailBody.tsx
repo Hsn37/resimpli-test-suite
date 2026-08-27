@@ -2,8 +2,16 @@
 
 import { Loader2 } from "lucide-react";
 import TranscriptView from "./TranscriptView";
+import ToolCallCard from "./ToolCallCard";
+import JsonTree from "./JsonTree";
 import Stars from "./Stars";
 import GradeBreakdown, { type CallGradeBreakdown } from "./GradeBreakdown";
+import {
+  resolveToolTimeline,
+  type ToolTimelineEntry,
+  type ToolCallSummary,
+  type TimelineItem,
+} from "@/lib/transcript";
 
 export type CallDetailTab =
   | "transcript"
@@ -21,6 +29,19 @@ export const CALL_DETAIL_TABS: { key: CallDetailTab; label: string }[] = [
   { key: "variables", label: "Variables" },
   { key: "raw", label: "Raw JSON" },
 ];
+
+// Fields already rendered in full by their own tab, or too heavy/low-signal
+// to be worth including (access_token is a short-lived WebRTC join token,
+// irrelevant once the call is over) — dropped from Raw JSON so it's the
+// catch-all for everything else instead of a full duplicate dump.
+const RAW_JSON_OMIT_KEYS = new Set([
+  "transcript",
+  "transcript_object",
+  "transcript_with_tool_calls",
+  "tool_calls",
+  "call_analysis",
+  "access_token",
+]);
 
 /**
  * The grade trigger button. Renders nothing when `onGrade` is omitted (e.g. the
@@ -89,9 +110,16 @@ export default function CallDetailBody({
   const transcriptObj = data.transcript_object as
     | Array<{ role: string; content: string }>
     | undefined;
-  const toolCalls = (data.tool_calls ?? data.tool_call_result) as
-    | Array<Record<string, unknown>>
-    | undefined;
+  // transcript_with_tool_calls is Retell's single chronological array mixing
+  // speech turns and tool-call events (verified against real get-call/
+  // list-calls responses — see resolveToolTimeline's doc comment). tool_calls
+  // is a separate summary array that carries per-call latency the timeline
+  // itself doesn't have.
+  const toolTimeline = data.transcript_with_tool_calls as ToolTimelineEntry[] | undefined;
+  const toolSummary = data.tool_calls as ToolCallSummary[] | undefined;
+  const resolvedToolCalls = resolveToolTimeline(toolTimeline ?? [], toolSummary ?? []).filter(
+    (item): item is Extract<TimelineItem, { kind: "tool" }> => item.kind === "tool"
+  );
   const analysis = data.call_analysis as Record<string, unknown> | undefined;
   const variables = data.retell_llm_dynamic_variables as
     | Record<string, unknown>
@@ -102,6 +130,15 @@ export default function CallDetailBody({
   const callGrades = data.call_grades as CallGradeBreakdown | null | undefined;
 
   if (tab === "transcript") {
+    if (toolTimeline && toolTimeline.length > 0) {
+      return (
+        <TranscriptView
+          turns={transcriptObj ?? []}
+          toolTimeline={toolTimeline}
+          toolSummary={toolSummary}
+        />
+      );
+    }
     if (transcriptObj && transcriptObj.length > 0) {
       return <TranscriptView turns={transcriptObj} />;
     }
@@ -118,17 +155,15 @@ export default function CallDetailBody({
   if (tab === "tools") {
     return (
       <div className="space-y-3">
-        {toolCalls && toolCalls.length > 0 ? (
-          toolCalls.map((tc, i) => (
-            <div
-              key={i}
-              className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-3"
-            >
-              <pre className="text-xs font-mono whitespace-pre-wrap text-zinc-700 dark:text-zinc-300 overflow-x-auto">
-                {JSON.stringify(tc, null, 2)}
-              </pre>
-            </div>
-          ))
+        {resolvedToolCalls.length > 0 ? (
+          <>
+            <p className="text-xs text-zinc-500">
+              {resolvedToolCalls.length} tool call{resolvedToolCalls.length === 1 ? "" : "s"}
+            </p>
+            {resolvedToolCalls.map((item) => (
+              <ToolCallCard key={item.call.toolCallId} call={item.call} />
+            ))}
+          </>
         ) : (
           <p className="text-sm text-zinc-500">No tool calls recorded.</p>
         )}
@@ -189,9 +224,18 @@ export default function CallDetailBody({
     );
   }
 
+  const rawData = Object.fromEntries(
+    Object.entries(data).filter(([key]) => !RAW_JSON_OMIT_KEYS.has(key))
+  );
   return (
-    <pre className="text-xs font-mono whitespace-pre-wrap break-words text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 overflow-x-auto">
-      {JSON.stringify(data, null, 2)}
-    </pre>
+    <div className="space-y-2">
+      <p className="text-xs text-zinc-400">
+        Transcript, tool calls, and analysis are shown in their own tabs —
+        omitted here to keep this readable.
+      </p>
+      <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 overflow-x-auto">
+        <JsonTree data={rawData} />
+      </div>
+    </div>
   );
 }
