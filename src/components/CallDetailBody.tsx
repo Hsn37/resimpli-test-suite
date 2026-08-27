@@ -2,8 +2,15 @@
 
 import { Loader2 } from "lucide-react";
 import TranscriptView from "./TranscriptView";
+import ToolCallCard from "./ToolCallCard";
 import Stars from "./Stars";
 import GradeBreakdown, { type CallGradeBreakdown } from "./GradeBreakdown";
+import {
+  resolveToolTimeline,
+  type ToolTimelineEntry,
+  type ToolCallSummary,
+  type TimelineItem,
+} from "@/lib/transcript";
 
 export type CallDetailTab =
   | "transcript"
@@ -89,9 +96,16 @@ export default function CallDetailBody({
   const transcriptObj = data.transcript_object as
     | Array<{ role: string; content: string }>
     | undefined;
-  const toolCalls = (data.tool_calls ?? data.tool_call_result) as
-    | Array<Record<string, unknown>>
-    | undefined;
+  // transcript_with_tool_calls is Retell's single chronological array mixing
+  // speech turns and tool-call events (verified against real get-call/
+  // list-calls responses — see resolveToolTimeline's doc comment). tool_calls
+  // is a separate summary array that carries per-call latency the timeline
+  // itself doesn't have.
+  const toolTimeline = data.transcript_with_tool_calls as ToolTimelineEntry[] | undefined;
+  const toolSummary = data.tool_calls as ToolCallSummary[] | undefined;
+  const resolvedToolCalls = resolveToolTimeline(toolTimeline ?? [], toolSummary ?? []).filter(
+    (item): item is Extract<TimelineItem, { kind: "tool" }> => item.kind === "tool"
+  );
   const analysis = data.call_analysis as Record<string, unknown> | undefined;
   const variables = data.retell_llm_dynamic_variables as
     | Record<string, unknown>
@@ -102,6 +116,15 @@ export default function CallDetailBody({
   const callGrades = data.call_grades as CallGradeBreakdown | null | undefined;
 
   if (tab === "transcript") {
+    if (toolTimeline && toolTimeline.length > 0) {
+      return (
+        <TranscriptView
+          turns={transcriptObj ?? []}
+          toolTimeline={toolTimeline}
+          toolSummary={toolSummary}
+        />
+      );
+    }
     if (transcriptObj && transcriptObj.length > 0) {
       return <TranscriptView turns={transcriptObj} />;
     }
@@ -118,17 +141,15 @@ export default function CallDetailBody({
   if (tab === "tools") {
     return (
       <div className="space-y-3">
-        {toolCalls && toolCalls.length > 0 ? (
-          toolCalls.map((tc, i) => (
-            <div
-              key={i}
-              className="border border-zinc-200 dark:border-zinc-800 rounded-lg p-3"
-            >
-              <pre className="text-xs font-mono whitespace-pre-wrap text-zinc-700 dark:text-zinc-300 overflow-x-auto">
-                {JSON.stringify(tc, null, 2)}
-              </pre>
-            </div>
-          ))
+        {resolvedToolCalls.length > 0 ? (
+          <>
+            <p className="text-xs text-zinc-500">
+              {resolvedToolCalls.length} tool call{resolvedToolCalls.length === 1 ? "" : "s"}
+            </p>
+            {resolvedToolCalls.map((item) => (
+              <ToolCallCard key={item.call.toolCallId} call={item.call} />
+            ))}
+          </>
         ) : (
           <p className="text-sm text-zinc-500">No tool calls recorded.</p>
         )}
