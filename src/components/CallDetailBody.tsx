@@ -39,7 +39,6 @@ const RAW_JSON_OMIT_KEYS = new Set([
   "transcript_object",
   "transcript_with_tool_calls",
   "tool_calls",
-  "retell_llm_dynamic_variables",
   "call_analysis",
   "access_token",
 ]);
@@ -231,8 +230,8 @@ export default function CallDetailBody({
   return (
     <div className="space-y-2">
       <p className="text-xs text-zinc-400">
-        Transcript, tool calls, analysis, and variables are shown in their own
-        tabs — omitted here to keep this readable.
+        Transcript, tool calls, and analysis are shown in their own tabs —
+        omitted here to keep this readable.
       </p>
       <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 overflow-x-auto">
         <JsonTree data={rawData} />
