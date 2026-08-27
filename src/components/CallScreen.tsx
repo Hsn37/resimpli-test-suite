@@ -16,13 +16,11 @@ import { RetellWebClient } from "retell-client-js-sdk";
 import { CALL_MODES, type CallMode, type TestPreset } from "@/lib/presets";
 import { logCall, patchCallGrade } from "@/lib/callLog";
 import { startRinging, stopRinging } from "@/lib/ringTone";
-import { resolveToolTimeline, type ToolTimelineEntry, type TimelineItem } from "@/lib/transcript";
 import { useToast } from "./Toast";
 import CallTimer from "./CallTimer";
 import CallViewer from "./CallViewer";
 import Stars from "./Stars";
 import TestDetailsPanel from "./TestDetailsPanel";
-import ToolCallCard from "./ToolCallCard";
 
 type CallPhase = "mic-check" | "ringing" | "connected" | "ended";
 
@@ -68,12 +66,6 @@ export default function CallScreen({
   const [showViewer, setShowViewer] = useState(false);
   const [grade, setGrade] = useState<number>(0);
   const [note, setNote] = useState("");
-  // Populated from the SDK's "update" event, which carries the running
-  // transcript so far — including tool_call_invocation/tool_call_result
-  // entries once Retell finalizes them, same shape as the post-call
-  // transcript_with_tool_calls. Lets a tester see a tool fire live instead
-  // of only after the call ends and they open View Details.
-  const [liveTimeline, setLiveTimeline] = useState<ToolTimelineEntry[]>([]);
 
   const clientRef = useRef<RetellWebClient | null>(null);
   const startTimeRef = useRef<number | null>(null);
@@ -85,9 +77,6 @@ export default function CallScreen({
 
   const modeConfig = CALL_MODES[mode];
   const isOutbound = mode !== "inbound";
-  const liveToolCalls = resolveToolTimeline(liveTimeline).filter(
-    (item): item is Extract<TimelineItem, { kind: "tool" }> => item.kind === "tool"
-  );
 
   const endCall = useCallback(() => {
     if (endedRef.current) return;
@@ -163,17 +152,6 @@ export default function CallScreen({
       client.on("agent_stop_talking", () => setAgentSpeaking(false));
       client.on("audio", (audio: { level: number }) => {
         setAudioLevel(audio.level ?? 0);
-      });
-      // "update" carries the running transcript so far (replaces, not
-      // deltas). The SDK has no dedicated tool-call event — this is the only
-      // real-time source, and whether Retell's live payload actually
-      // includes tool_call_invocation/tool_call_result entries (vs. only
-      // finalizing them post-call) hasn't been verified against a real call;
-      // resolveToolTimeline ignores anything that doesn't match those roles,
-      // so an unexpected shape just yields no live cards rather than erroring.
-      client.on("update", (update: unknown) => {
-        const t = (update as { transcript?: unknown })?.transcript;
-        if (Array.isArray(t)) setLiveTimeline(t as ToolTimelineEntry[]);
       });
       client.on("error", (error: Error) => {
         const msg = error?.message || "";
@@ -421,20 +399,6 @@ export default function CallScreen({
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {callId}
         </button>
-      )}
-
-      {/* Live tool calls, as Retell reports them during the call */}
-      {liveToolCalls.length > 0 && (
-        <div className="w-full max-w-sm space-y-2">
-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-            Tool Calls ({liveToolCalls.length})
-          </p>
-          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-            {liveToolCalls.map((item) => (
-              <ToolCallCard key={item.call.toolCallId} call={item.call} />
-            ))}
-          </div>
-        </div>
       )}
 
       {/* Controls */}
