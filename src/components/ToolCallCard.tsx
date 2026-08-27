@@ -61,7 +61,7 @@ function PrettyValue({ value }: { value: unknown }) {
 }
 
 /** Collapsed-by-default card for one resolved tool call: name, position in
- * the call, latency, success, and expandable args/output. Used inline in the
+ * the call, latency, success, and expandable output. Used inline in the
  * transcript (at the point the call happened) and in the flat Tool Calls tab. */
 export default function ToolCallCard({ call }: { call: ResolvedToolCall }) {
   const [open, setOpen] = useState(false);
@@ -98,12 +98,6 @@ export default function ToolCallCard({ call }: { call: ResolvedToolCall }) {
       </button>
       {open && (
         <div className="px-3.5 pb-3.5 space-y-3 text-sm border-t border-indigo-200/60 dark:border-indigo-900/40 pt-3">
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">
-              Arguments
-            </div>
-            <PrettyValue value={call.args} />
-          </div>
           {call.output !== null ? (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">
