@@ -128,6 +128,7 @@ export async function GET(request: Request) {
       // DB stores the rating as a score out of 10; convert to a star count
       // for the UI, which renders star icons.
       const grade = log?.grade != null ? scoreToStars(log.grade) : null;
+      const toolCalls = call.tool_calls as unknown[] | undefined;
       return {
         ...call,
         // Prefer the agent's current name (so a rename shows through); fall
@@ -138,6 +139,14 @@ export async function GET(request: Request) {
           agentNames.get(call.agent_id as string) ??
           (call.agent_name as string | undefined) ??
           null,
+        // The list only needs the count for the row chip — the full arrays
+        // (tool_calls, transcript_with_tool_calls) can run several KB per
+        // call with real tool output; dropped here so a 1000-call page load
+        // doesn't ship megabytes it never renders. The single-call route
+        // still returns them in full for the detail view.
+        tool_call_count: toolCalls?.length ?? 0,
+        tool_calls: undefined,
+        transcript_with_tool_calls: undefined,
         grade,
         note: log?.note ?? null,
         user_email: log?.user_email ?? metaUser ?? null,

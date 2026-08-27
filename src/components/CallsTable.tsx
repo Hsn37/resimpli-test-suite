@@ -11,6 +11,7 @@ import {
   Play,
   Share2,
   Check,
+  Wrench,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import AudioPlayer from "@/components/AudioPlayer";
@@ -45,6 +46,10 @@ export interface CallRowData {
   grade100?: number | null;
   ai_callout?: boolean;
   ai_note?: string | null;
+  // Only populated for /calls (live Retell list) — the dashboard's ingested
+  // `calls` rows don't store this, so it's undefined there and the chip
+  // simply doesn't render.
+  tool_call_count?: number;
 }
 
 // Shared labeled-score chip: a compact banded pill (Rep/Grade + value + /100).
@@ -227,6 +232,15 @@ function CallRow({
                 className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0 ${statusClass}`}
               >
                 {call.call_status}
+              </span>
+            )}
+            {!!call.tool_call_count && (
+              <span
+                title={`${call.tool_call_count} tool call${call.tool_call_count === 1 ? "" : "s"}`}
+                className="flex items-center gap-1 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-1.5 py-0.5 rounded-full shrink-0"
+              >
+                <Wrench size={9} />
+                {call.tool_call_count}
               </span>
             )}
           </div>
