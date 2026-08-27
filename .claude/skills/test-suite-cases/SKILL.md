@@ -71,7 +71,12 @@ for itself. The `_comment` at the top of `base_defaults.json` records this.
 ## When a new agent version lands
 
 Diff the agent's variable surface against the base defaults. Variables come from
-two places: `{{...}}` in `general_prompt`, and `dv.<name>` inside the `code` tools.
+two places: `{{...}}` in `general_prompt`, and the `code` tools — where a tool
+reads them **either** as `dv.<name>` **or** through the string-keyed helpers the
+tools define at the top (`const s=k=>String(dv[k]||"").trim(), sl=k=>s(k).toLowerCase()`,
+called as `s("name")` / `sl("name")`). Match both forms or the diff lies: a
+`dv\.`-only regex reports a clean surface while missing every helper-read
+variable. `offer_already_delivered` hid that way until 2026-08-27.
 
 ```python
 import json, re
@@ -82,6 +87,7 @@ tool_vars = set()
 for t in llm["general_tools"]:
     if t.get("type") == "code":
         tool_vars |= set(re.findall(r"\bdv\.([A-Za-z0-9_]+)", t["code"]))
+        tool_vars |= set(re.findall(r"\b(?:s|sl)\(\"([A-Za-z0-9_]+)\"\)", t["code"]))
 needed = {v for v in prompt_vars | tool_vars
           if not v.startswith(("section_", "edv_"))}
 base = json.load(open("testing/base_defaults.json"))["inbound"]
@@ -136,7 +142,10 @@ Entry shape — every field is required:
   "callType": "inbound",           // inbound | outbound_followup | speed_to_lead
   "sheet_what_to_say": "",         // QA-sheet columns; documentation only,
   "sheet_what_to_watch_for": "",   // make_presets does not read these two
-  "overrides": {},                 // keys MUST exist in base_defaults[callType]
+  "overrides": {},                 // keys MUST exist in base_defaults[callType];
+                                   // a null VALUE deletes the key from the
+                                   // preset, for cases that stage an ABSENT
+                                   // variable rather than a blank one
   "userMessages": ["...", "..."],  // what the tester says, in order
   "expectedBehavior": "incl. explicit fail conditions",
   "expectedPath": "OPENER -> DISCOVERY (...) -> ROUTING",
