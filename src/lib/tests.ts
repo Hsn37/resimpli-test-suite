@@ -1,5 +1,14 @@
-// AUTO-GENERATED from testing/dev_test_cases.json — do not edit by hand.
-// Regenerate: conda run -n env python testing/make_presets.py
+// FROZEN FALLBACK — not the source of truth.
+//
+// Test cases live in the `test_presets` / `preset_defaults` tables and are
+// edited in Admin > Test Cases. This file is the snapshot that was current when
+// they moved there (141 cases, 2026-09-01), kept only so Call Setup still shows
+// something if the test-case service is unreachable; it is flagged as an
+// "offline copy" in the UI when that happens.
+//
+// It does NOT track later edits and is not regenerated. Do not add cases here —
+// they would be invisible to the admin panel, the QA-sheet export and the API.
+// The generator that used to build it (testing/make_presets.py) is retired.
 import type { TestPreset } from "./presets";
 
 export const TEST_PRESETS: TestPreset[] = [

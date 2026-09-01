@@ -3,6 +3,7 @@ import { createClient, type Client } from "@libsql/client";
 import { starsToScore } from "./grade";
 import type { TestCase } from "./testCase";
 import { ALL_AGENTS_TAG } from "./presets";
+import { presetId, type PresetDefaults, type TestPresetRecord } from "./testPreset";
 import {
   FAILURE_CLASSES,
   REP_DIMENSIONS,
@@ -254,6 +255,59 @@ function ensureSchema(): Promise<void> {
           PRIMARY KEY (workspace, agent_id)
         )`
       ),
+      // Live-call test presets. Deliberately NOT workspace-scoped: a case is
+      // scoped by agent_scope (Inbound/Outbound/STL/Any) and every workspace
+      // tests the same behaviour, so scoping here would mean authoring every
+      // case four times.
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS preset_defaults (
+          call_type   TEXT NOT NULL,
+          key         TEXT NOT NULL,
+          value       TEXT NOT NULL,
+          updated_at  INTEGER,
+          PRIMARY KEY (call_type, key)
+        )`
+      ),
+      // Stores OVERRIDES only, never composed variables — see lib/testPreset.ts.
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS test_presets (
+          id                      TEXT PRIMARY KEY,
+          test_no                 INTEGER NOT NULL,
+          scenario                TEXT NOT NULL,
+          group_name              TEXT NOT NULL,
+          agent_scope             TEXT NOT NULL,
+          call_type               TEXT NOT NULL,
+          priority                TEXT NOT NULL,
+          high_risk               INTEGER NOT NULL DEFAULT 0,
+          needs_lead_profile      INTEGER NOT NULL DEFAULT 0,
+          agent_config            TEXT NOT NULL DEFAULT 'Default',
+          setup                   TEXT,
+          sheet_what_to_say       TEXT,
+          sheet_what_to_watch_for TEXT,
+          overrides               TEXT NOT NULL DEFAULT '{}',
+          user_messages           TEXT NOT NULL DEFAULT '[]',
+          expected_path           TEXT,
+          expected_behavior       TEXT,
+          sample                  TEXT,
+          tester_notes            TEXT,
+          active                  INTEGER NOT NULL DEFAULT 1,
+          updated_by              TEXT,
+          updated_at              INTEGER
+        )`
+      ),
+      // Append-only audit trail. Replaces what git history provided before the
+      // cases moved out of dev_test_cases.json: who changed what, plus a
+      // snapshot to revert to.
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS test_preset_revisions (
+          id          TEXT PRIMARY KEY,
+          preset_id   TEXT NOT NULL,
+          action      TEXT NOT NULL,
+          snapshot    TEXT NOT NULL,
+          actor       TEXT,
+          created_at  INTEGER
+        )`
+      ),
     ]);
     // Added after the initial call-grader schema. Nullable preserves the
     // distinction between an explicit false and post-call analysis not having
@@ -320,6 +374,16 @@ function ensureSchema(): Promise<void> {
       db.execute(
         `CREATE INDEX IF NOT EXISTS call_grades_workspace_grade
          ON call_grades (workspace, grade)`
+      ),
+      // test_no is the QA-sheet row number — one case per number, enforced here
+      // so a concurrent create fails loudly instead of silently doubling up.
+      db.execute(
+        `CREATE UNIQUE INDEX IF NOT EXISTS test_presets_test_no
+         ON test_presets (test_no)`
+      ),
+      db.execute(
+        `CREATE INDEX IF NOT EXISTS test_preset_revisions_preset
+         ON test_preset_revisions (preset_id, created_at DESC)`
       ),
     ]);
     await seedGraderRubric(db);
@@ -2007,4 +2071,272 @@ export async function countGradeableUngraded(
     args: [workspace, minDurationSeconds],
   });
   return Number(result.rows[0]?.n ?? 0);
+}
+
+// ---------------------------------------------------------------------------
+// Live-call test presets (global — not workspace-scoped).
+//
+// preset_defaults holds the per-call-type variable base; test_presets holds
+// each case's OVERRIDES. The composed variables a tester sees are built at read
+// time by composePreset() in lib/testPreset.ts, so adding a default propagates
+// to every case for that call type without a backfill.
+// ---------------------------------------------------------------------------
+
+/** All variable defaults, as callType -> key -> value. */
+export async function listPresetDefaults(): Promise<PresetDefaults> {
+  const db = await getDb();
+  const result = await db.execute(
+    `SELECT call_type, key, value FROM preset_defaults ORDER BY call_type, key`
+  );
+  const defaults: PresetDefaults = {};
+  for (const row of result.rows) {
+    const callType = String(row.call_type);
+    (defaults[callType] ??= {})[String(row.key)] = String(row.value ?? "");
+  }
+  return defaults;
+}
+
+/** Add or update one default variable for a call type. */
+export async function upsertPresetDefault(
+  callType: string,
+  key: string,
+  value: string
+): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `INSERT INTO preset_defaults (call_type, key, value, updated_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(call_type, key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at`,
+    args: [callType, key, value, Date.now()],
+  });
+}
+
+export async function deletePresetDefault(callType: string, key: string): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `DELETE FROM preset_defaults WHERE call_type = ? AND key = ?`,
+    args: [callType, key],
+  });
+}
+
+/**
+ * How many cases override a given default. Deleting a default that cases still
+ * override would orphan those overrides, so the Defaults tab warns with this
+ * count before allowing it.
+ */
+export async function countPresetsOverriding(
+  callType: string,
+  key: string
+): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT COUNT(*) AS n FROM test_presets
+          WHERE call_type = ? AND active = 1
+            AND json_type(overrides, '$.' || ?) IS NOT NULL`,
+    args: [callType, key],
+  });
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+function rowToTestPresetRecord(row: Record<string, unknown>): TestPresetRecord {
+  return {
+    id: String(row.id),
+    test_no: Number(row.test_no ?? 0),
+    scenario: String(row.scenario ?? ""),
+    group_name: String(row.group_name ?? ""),
+    agent_scope: String(row.agent_scope ?? ""),
+    call_type: String(row.call_type ?? ""),
+    priority: String(row.priority ?? ""),
+    high_risk: Number(row.high_risk) !== 0,
+    needs_lead_profile: Number(row.needs_lead_profile) !== 0,
+    agent_config: String(row.agent_config ?? ""),
+    setup: String(row.setup ?? ""),
+    sheet_what_to_say: String(row.sheet_what_to_say ?? ""),
+    sheet_what_to_watch_for: String(row.sheet_what_to_watch_for ?? ""),
+    overrides: parseJson(row.overrides, {}),
+    user_messages: parseJson(row.user_messages, []),
+    expected_path: String(row.expected_path ?? ""),
+    expected_behavior: String(row.expected_behavior ?? ""),
+    sample: String(row.sample ?? ""),
+    tester_notes: String(row.tester_notes ?? ""),
+    active: Number(row.active) !== 0,
+    updated_by: String(row.updated_by ?? ""),
+    updated_at: Number(row.updated_at ?? 0),
+  };
+}
+
+/** Cases in sheet order (test number). Inactive ones are for the admin list only. */
+export async function listTestPresetRecords(
+  includeInactive = false
+): Promise<TestPresetRecord[]> {
+  const db = await getDb();
+  const result = await db.execute(
+    `SELECT * FROM test_presets
+     ${includeInactive ? "" : "WHERE active = 1"}
+     ORDER BY test_no ASC`
+  );
+  return result.rows.map((row) =>
+    rowToTestPresetRecord(row as unknown as Record<string, unknown>)
+  );
+}
+
+export async function getTestPresetRecord(id: string): Promise<TestPresetRecord | null> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM test_presets WHERE id = ?`,
+    args: [id],
+  });
+  if (result.rows.length === 0) return null;
+  return rowToTestPresetRecord(result.rows[0] as unknown as Record<string, unknown>);
+}
+
+/**
+ * Next free test number. Counts deactivated cases too — a retired number is
+ * never reused, so old QA sheets and call notes keep resolving to one case.
+ */
+export async function nextTestNo(): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute(`SELECT MAX(test_no) AS n FROM test_presets`);
+  return Number(result.rows[0]?.n ?? 0) + 1;
+}
+
+export type TestPresetAction = "create" | "update" | "deactivate" | "reactivate" | "import";
+
+/** Append a snapshot of the case as it stands after a write. */
+async function insertTestPresetRevision(
+  record: TestPresetRecord,
+  action: TestPresetAction,
+  actor: string
+): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `INSERT INTO test_preset_revisions (id, preset_id, action, snapshot, actor, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [newId("rev"), record.id, action, JSON.stringify(record), actor, Date.now()],
+  });
+}
+
+/**
+ * Create or update a case, recording a revision. `id` is derived from test_no,
+ * so renumbering is a create + deactivate rather than an in-place edit.
+ */
+export async function upsertTestPresetRecord(
+  input: Omit<TestPresetRecord, "id" | "updated_by" | "updated_at">,
+  actor: string,
+  action: TestPresetAction
+): Promise<TestPresetRecord> {
+  const db = await getDb();
+  const record: TestPresetRecord = {
+    ...input,
+    id: presetId(input.test_no),
+    updated_by: actor,
+    updated_at: Date.now(),
+  };
+  await db.execute({
+    sql: `INSERT INTO test_presets
+            (id, test_no, scenario, group_name, agent_scope, call_type, priority,
+             high_risk, needs_lead_profile, agent_config, setup,
+             sheet_what_to_say, sheet_what_to_watch_for, overrides, user_messages,
+             expected_path, expected_behavior, sample, tester_notes,
+             active, updated_by, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            test_no = excluded.test_no,
+            scenario = excluded.scenario,
+            group_name = excluded.group_name,
+            agent_scope = excluded.agent_scope,
+            call_type = excluded.call_type,
+            priority = excluded.priority,
+            high_risk = excluded.high_risk,
+            needs_lead_profile = excluded.needs_lead_profile,
+            agent_config = excluded.agent_config,
+            setup = excluded.setup,
+            sheet_what_to_say = excluded.sheet_what_to_say,
+            sheet_what_to_watch_for = excluded.sheet_what_to_watch_for,
+            overrides = excluded.overrides,
+            user_messages = excluded.user_messages,
+            expected_path = excluded.expected_path,
+            expected_behavior = excluded.expected_behavior,
+            sample = excluded.sample,
+            tester_notes = excluded.tester_notes,
+            active = excluded.active,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at`,
+    args: [
+      record.id,
+      record.test_no,
+      record.scenario,
+      record.group_name,
+      record.agent_scope,
+      record.call_type,
+      record.priority,
+      record.high_risk ? 1 : 0,
+      record.needs_lead_profile ? 1 : 0,
+      record.agent_config,
+      record.setup,
+      record.sheet_what_to_say,
+      record.sheet_what_to_watch_for,
+      JSON.stringify(record.overrides),
+      JSON.stringify(record.user_messages),
+      record.expected_path,
+      record.expected_behavior,
+      record.sample,
+      record.tester_notes,
+      record.active ? 1 : 0,
+      record.updated_by,
+      record.updated_at,
+    ],
+  });
+  await insertTestPresetRevision(record, action, actor);
+  return record;
+}
+
+/** Soft delete / restore. Cases are never hard-deleted — QA sheets cite them by number. */
+export async function setTestPresetActive(
+  id: string,
+  active: boolean,
+  actor: string
+): Promise<TestPresetRecord | null> {
+  const db = await getDb();
+  const now = Date.now();
+  await db.execute({
+    sql: `UPDATE test_presets SET active = ?, updated_by = ?, updated_at = ? WHERE id = ?`,
+    args: [active ? 1 : 0, actor, now, id],
+  });
+  const record = await getTestPresetRecord(id);
+  if (record) {
+    await insertTestPresetRevision(record, active ? "reactivate" : "deactivate", actor);
+  }
+  return record;
+}
+
+export interface TestPresetRevision {
+  id: string;
+  preset_id: string;
+  action: string;
+  snapshot: TestPresetRecord;
+  actor: string;
+  created_at: number;
+}
+
+export async function listTestPresetRevisions(
+  presetId: string,
+  limit = 50
+): Promise<TestPresetRevision[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM test_preset_revisions
+          WHERE preset_id = ? ORDER BY created_at DESC LIMIT ?`,
+    args: [presetId, limit],
+  });
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    preset_id: String(row.preset_id),
+    action: String(row.action ?? ""),
+    snapshot: parseJson(row.snapshot, {} as TestPresetRecord),
+    actor: String(row.actor ?? ""),
+    created_at: Number(row.created_at ?? 0),
+  }));
 }

@@ -106,6 +106,35 @@ export default function CallSetup({
   const [selectedTest, setSelectedTest] = useState<TestPreset | null>(null);
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
   const presetMenuRef = useRef<HTMLDivElement>(null);
+  // Test cases live in the DB so admins can edit them without a redeploy (see
+  // Admin > Test Cases). The compiled TEST_PRESETS are the initial value and
+  // the offline fallback, so a failed fetch degrades to the frozen build-time
+  // snapshot rather than an empty picker — flagged in the UI, because that
+  // snapshot silently goes stale as cases are edited.
+  const [presets, setPresets] = useState<TestPreset[]>(TEST_PRESETS);
+  const [usingFallback, setUsingFallback] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/test-presets");
+        if (!res.ok) throw new Error("request failed");
+        const data = await res.json();
+        if (cancelled) return;
+        if (Array.isArray(data.presets) && data.presets.length > 0) {
+          setPresets(data.presets);
+        } else {
+          setUsingFallback(true);
+        }
+      } catch {
+        if (!cancelled) setUsingFallback(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!presetMenuOpen) return;
@@ -135,8 +164,8 @@ export default function CallSetup({
     agentTag !== ALL_AGENTS_TAG ? agentTag : mode ? MODE_TO_TAG[mode] : ALL_AGENTS_TAG;
 
   const availablePresets = useMemo(
-    () => presetsForAgentTag(TEST_PRESETS, presetFilterTag),
-    [presetFilterTag]
+    () => presetsForAgentTag(presets, presetFilterTag),
+    [presets, presetFilterTag]
   );
 
   const presetGroups = useMemo(() => {
@@ -250,6 +279,14 @@ export default function CallSetup({
         <span className="text-[11px] font-medium text-zinc-500 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded-md">
           {availablePresets.length} available
         </span>
+        {usingFallback && (
+          <span
+            title="Could not reach the test-case service — showing the copy compiled into this build, which may be out of date."
+            className="text-[11px] font-medium text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950 px-1.5 py-0.5 rounded-md"
+          >
+            offline copy
+          </span>
+        )}
       </div>
       <div className="shrink-0 flex items-center gap-2 mb-5">
         <div className="relative flex-1" ref={presetMenuRef}>
