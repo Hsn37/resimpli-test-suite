@@ -9,6 +9,7 @@ import {
   PhoneCall,
   History,
   FlaskConical,
+  ListChecks,
   Settings,
   Menu,
   X,
@@ -23,21 +24,27 @@ interface NavItem {
   label: string;
   icon: ComponentType<{ size?: number }>;
   adminOnly?: boolean;
+  // Highlight on this exact route only. Set on /admin so that /admin/presets
+  // lights up Test Cases alone rather than both entries.
+  exact?: boolean;
 }
 
-// Nav order per spec. Admin tab is gated below via isAdminEmail.
+// Nav order per spec. Admin entries are gated below via isAdminEmail.
 const NAV_ITEMS: readonly NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
   { href: "/test", label: "Test Call", icon: PhoneCall },
   { href: "/calls", label: "Calls", icon: History },
   { href: "/batch-tests", label: "Batch Tests", icon: FlaskConical },
-  { href: "/admin", label: "Admin", icon: Settings, adminOnly: true },
+  { href: "/admin/presets", label: "Test Cases", icon: ListChecks, adminOnly: true },
+  { href: "/admin", label: "Admin", icon: Settings, adminOnly: true, exact: true },
 ];
 
 // A nav item is active for its exact route or any nested route (e.g.
-// /dashboard/calls/[id] keeps Dashboard highlighted).
-function isActive(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`);
+// /dashboard/calls/[id] keeps Dashboard highlighted), unless it opts into
+// exact matching.
+function isActive(pathname: string, item: NavItem): boolean {
+  if (item.exact) return pathname === item.href;
+  return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
@@ -52,7 +59,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
     <nav className="flex flex-col gap-1">
       {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => {
         const Icon = item.icon;
-        const active = isActive(pathname, item.href);
+        const active = isActive(pathname, item);
         return (
           <Link
             key={item.href}
