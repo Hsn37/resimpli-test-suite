@@ -82,6 +82,10 @@ export async function GET(
 
     return NextResponse.json({
       ...call,
+      // The account this call actually lives in (not necessarily the session's
+      // active one) — the detail page labels the call with it, which is what
+      // makes a cross-workspace lookup readable.
+      workspace,
       agent_name: agentName,
       grade,
       note: log?.note ?? null,

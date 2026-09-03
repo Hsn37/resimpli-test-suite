@@ -10,6 +10,7 @@ import CallDetailBody, {
   type CallDetailTab,
 } from "@/components/CallDetailBody";
 import { downloadJson, downloadRecording } from "@/lib/downloadRecording";
+import { WORKSPACE_META, isWorkspace } from "@/lib/workspace";
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -62,6 +63,9 @@ function ShareContent({ callId }: { callId: string }) {
     downloadJson(data, `${callId}.json`);
   }
 
+  // Stamped by /api/calls/[id] as the workspace the call was resolved against,
+  // so a call opened from Call Search (or a shared link) says where it lives.
+  const workspace = data?.workspace;
   const recordingUrl = data?.recording_url as string | undefined;
   const agentName = data?.agent_name as string | null | undefined;
   const userEmail = data?.user_email as string | null | undefined;
@@ -79,6 +83,11 @@ function ShareContent({ callId }: { callId: string }) {
       <div className="flex items-center gap-2 mb-1">
         <Phone size={18} />
         <h1 className="font-semibold text-lg">{agentName ?? "Call Recording"}</h1>
+        {isWorkspace(workspace) && (
+          <span className="rounded-md border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 text-xs font-medium text-blue-600 dark:text-blue-400">
+            {WORKSPACE_META[workspace].label}
+          </span>
+        )}
       </div>
       <button
         onClick={copyId}

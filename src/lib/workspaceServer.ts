@@ -4,6 +4,7 @@ import { isSessionAdmin } from "./admin";
 import {
   DEFAULT_WORKSPACE,
   WORKSPACE_COOKIE,
+  WORKSPACES,
   isWorkspace,
   type Workspace,
 } from "./workspace";
@@ -24,6 +25,16 @@ export { retellKeyForWorkspace } from "./retellKeys";
  */
 export async function isWorkspaceAuthorized(workspace: Workspace): Promise<boolean> {
   return workspace === DEFAULT_WORKSPACE || (await isSessionAdmin());
+}
+
+/**
+ * Every workspace the current session may read, in WORKSPACES order. Same
+ * access model as isWorkspaceAuthorized(), just enumerated: admins get all of
+ * them, everyone else only "dev". Used by lookups that fan out across
+ * workspaces (call search) so the model stays defined in one place.
+ */
+export async function getAuthorizedWorkspaces(): Promise<readonly Workspace[]> {
+  return (await isSessionAdmin()) ? WORKSPACES : [DEFAULT_WORKSPACE];
 }
 
 /**

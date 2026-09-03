@@ -18,6 +18,7 @@ import CallViewer from "@/components/CallViewer";
 import CallsTable, { type CallRowData, sharePath } from "@/components/CallsTable";
 import { useWorkspace } from "@/components/WorkspaceProvider";
 import type { CallRowGrade } from "@/lib/callGrade";
+import { CALL_ID_RE } from "@/lib/callSearch";
 import type { Workspace } from "@/lib/workspace";
 import {
   downloadCsv,
@@ -154,10 +155,6 @@ const PAGE_SIZE = 50;
 // 30s budget (a 5000 fetch 500'd). 1000 = one page, fast. The date-range loader
 // reuses this same cap over a from/to window.
 const FETCH_LIMIT = 1000;
-
-// Retell call IDs are `call_` followed by an alphanumeric token. Used to detect
-// when a search query is an exact ID worth fetching straight from Retell.
-const CALL_ID_RE = /^call_[a-zA-Z0-9]+$/;
 
 // Shared fetch for the /api/calls/list endpoint (recent window, a date range,
 // or a single call_id). Normalizes the array-or-{calls} response shape.
