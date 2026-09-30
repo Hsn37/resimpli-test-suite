@@ -22,11 +22,14 @@ import { WORKSPACES, type Workspace } from "./workspace";
 //              until they are final.
 //   backward — cost_backfill_cursor: walks from "now at first sync" back to
 //              cost_backfill_floor (COST_HISTORY_START by default), resumable.
-//   roll-ups — cost_rollup_pending: reporting-timezone days whose raw rows
-//              changed; each is rebuilt into call_cost_daily. Today is
-//              rebuilt at most every ROLLUP_TODAY_INTERVAL_MS.
+//   roll-ups — cost_rollup_pending: reporting-timezone days a page of rows
+//              touches, queued BEFORE the rows are written; each is rebuilt
+//              into call_cost_daily. Today is rebuilt at most every
+//              ROLLUP_TODAY_INTERVAL_MS.
 //   prune    — call rows older than RAW_RETENTION_DAYS are deleted daily,
 //              only once every pending roll-up is built.
+//   gating   — cost_last_run_at / cost_sync_lock: the cron syncs a workspace
+//              at most every SYNC_INTERVAL_MS, and never two runs at once.
 //
 // Retell's v3 start_timestamp range filter is inclusive at both ends, so the
 // backfill resumes from the oldest start_ts it has seen; the boundary rows are
@@ -46,6 +49,12 @@ const ROLLUP_TODAY_INTERVAL_MS = 5 * 60 * 1000;
 const ROLLUP_VERSION = 1;
 const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const PRUNE_BATCH = 5000;
+// The cron ticks every few minutes for grading; spend doesn't need that
+// cadence, and each run pulls every workspace's recent calls from Retell.
+const SYNC_INTERVAL_MS = 15 * 60 * 1000;
+// A run can overshoot its deadline by a page write or a roll-up; its lock
+// outlives the deadline by this much, then lapses if the run died.
+const LOCK_GRACE_MS = 30_000;
 
 // Calls without a final cost yet — not stored; the forward sync re-reads them.
 const UNFINISHED_STATUSES = new Set(["registered", "ongoing"]);
@@ -60,6 +69,8 @@ const KEYS = {
   rollupVersion: "cost_rollup_version",
   rollupTodayAt: "cost_rollup_today_at",
   pruneAt: "cost_prune_at",
+  lastRunAt: "cost_last_run_at",
+  lock: "cost_sync_lock",
 } as const;
 
 type RetellCall = Record<string, unknown>;
@@ -129,16 +140,13 @@ function awaitingFinalCost(call: RetellCall, row: CostRow | null): boolean {
 }
 
 /**
- * Upsert rows in one batch and return the ones that actually changed. The DO
- * UPDATE is guarded so re-reading an unchanged call (every lookback / boundary
- * overlap) costs no row write — and reports rowsAffected = 0, which is how we
- * know which days' roll-ups need rebuilding.
+ * Upsert rows in one batch. The DO UPDATE is guarded so re-reading an
+ * unchanged call (every lookback / boundary overlap) costs no row write.
  */
-async function upsertCostRows(workspace: Workspace, rows: CostRow[]): Promise<CostRow[]> {
-  if (rows.length === 0) return [];
+async function upsertCostRows(workspace: Workspace, rows: CostRow[]): Promise<void> {
   const db = await getDb();
   const now = Date.now();
-  const results = await db.batch(
+  await db.batch(
     rows.map((r) => ({
       sql: `INSERT INTO call_costs
               (call_id, workspace, agent_id, agent_name, agent_version, direction, call_status,
@@ -179,7 +187,20 @@ async function upsertCostRows(workspace: Workspace, rows: CostRow[]): Promise<Co
     })),
     "write"
   );
-  return rows.filter((_, i) => results[i].rowsAffected > 0);
+}
+
+/**
+ * Write a page of rows, queueing their days for a roll-up rebuild FIRST. A
+ * crash between the two only rebuilds a day that didn't change; the other
+ * order could lose a changed day for good, since re-reading the same calls
+ * later is a no-op. Relies on the per-workspace lock for the queue update.
+ */
+async function saveRows(workspace: Workspace, rows: CostRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  const pending = await getAppConfig<string[]>(workspace, KEYS.rollupPending);
+  const days = new Set([...(Array.isArray(pending) ? pending : []), ...rows.map((r) => costDayOf(r.start_ts))]);
+  await setAppConfig(workspace, KEYS.rollupPending, [...days]);
+  await upsertCostRows(workspace, rows);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +247,9 @@ export interface CostSyncResult {
   backfill: { fetched: number; done: boolean; cursor: number | null };
   rollups: { rebuilt: number; pending: number };
   pruned: number;
+  // Set when the run did nothing: within SYNC_INTERVAL_MS of the last one,
+  // or another run holds the workspace's lock.
+  skipped?: "throttled" | "locked";
   error?: string;
 }
 
@@ -238,8 +262,7 @@ interface SyncOpts {
 async function syncForward(
   workspace: Workspace,
   apiKey: string,
-  opts: SyncOpts,
-  dirty: Set<string>
+  opts: SyncOpts
 ): Promise<CostSyncResult["forward"]> {
   const now = Date.now();
   const hwm = (await getAppConfig<number>(workspace, KEYS.hwm)) ?? now;
@@ -278,7 +301,7 @@ async function syncForward(
         newest = Math.max(newest, row.start_ts);
       }
     }
-    for (const r of await upsertCostRows(workspace, rows)) dirty.add(costDayOf(r.start_ts));
+    await saveRows(workspace, rows);
     paginationKey = page.has_more ? page.pagination_key : undefined;
   } while (paginationKey);
 
@@ -291,8 +314,7 @@ async function syncForward(
 async function syncBackfill(
   workspace: Workspace,
   apiKey: string,
-  opts: SyncOpts,
-  dirty: Set<string>
+  opts: SyncOpts
 ): Promise<CostSyncResult["backfill"]> {
   const [complete, cursorRaw, floorRaw] = await Promise.all([
     getAppConfig<boolean>(workspace, KEYS.backfillComplete),
@@ -314,8 +336,7 @@ async function syncBackfill(
     );
     if (!page) return { fetched, done: false, cursor };
     fetched += page.items.length;
-    const rows = page.items.map(toCostRow).filter((r): r is CostRow => r != null);
-    for (const r of await upsertCostRows(workspace, rows)) dirty.add(costDayOf(r.start_ts));
+    await saveRows(workspace, page.items.map(toCostRow).filter((r): r is CostRow => r != null));
 
     if (!page.has_more || page.items.length === 0) {
       // Compare-and-set: `--since` may have moved the floor earlier while this
@@ -441,13 +462,12 @@ async function rebuildDay(workspace: Workspace, day: string): Promise<void> {
 }
 
 /**
- * Queue `dirty` days and rebuild as many pending days as time allows, newest
- * first. The merged queue is saved BEFORE rebuilding, so a failure part-way
- * never loses a day that still needs rebuilding.
+ * Rebuild as many queued days as time allows, newest first. saveRows queues
+ * days before writing their rows, so the queue already holds every day that
+ * needs rebuilding; a day leaves it only once rebuilt.
  */
 async function refreshRollups(
   workspace: Workspace,
-  dirty: Set<string>,
   deadline: number,
   rebuildTodayNow: boolean
 ): Promise<CostSyncResult["rollups"]> {
@@ -457,17 +477,18 @@ async function refreshRollups(
     getAppConfig<number>(workspace, KEYS.rollupTodayAt),
     getAppConfig<number>(workspace, KEYS.backfillFloor),
   ]);
-  const pending = new Set([...(Array.isArray(pendingRaw) ? pendingRaw : []), ...dirty]);
+  const pending = new Set(Array.isArray(pendingRaw) ? pendingRaw : []);
   const today = costToday();
 
   // First run (or a ROLLUP_VERSION bump): queue every day raw rows can cover.
+  // Queue first, version second, so a crash between them just redoes this.
   if (version !== ROLLUP_VERSION) {
     const floorDay = costDayOf(floorRaw ?? historyFloorMs());
     const cutoff = retentionCutoffDay();
     for (let d = floorDay < cutoff ? cutoff : floorDay; d <= today; d = addDays(d, 1)) pending.add(d);
+    await setAppConfig(workspace, KEYS.rollupPending, [...pending]);
     await setAppConfig(workspace, KEYS.rollupVersion, ROLLUP_VERSION);
   }
-  await setAppConfig(workspace, KEYS.rollupPending, [...pending]);
 
   const todayDue = rebuildTodayNow || !todayAt || Date.now() - todayAt >= ROLLUP_TODAY_INTERVAL_MS;
   let rebuilt = 0;
@@ -513,24 +534,50 @@ async function pruneRawRows(workspace: Workspace, deadline: number): Promise<num
 }
 
 // ---------------------------------------------------------------------------
+// Run gating
+// ---------------------------------------------------------------------------
+
+/**
+ * Claim the workspace's sync lock until `until` (epoch ms). Cron ticks, a
+ * second deployment and the backfill script can overlap; two runs would race
+ * on the roll-up queue and could write a stale roll-up over a fresh one. The
+ * lock is an app_config row holding its expiry, claimed in one statement, so
+ * a run that dies simply lets it lapse.
+ */
+async function takeLock(workspace: Workspace, until: number): Promise<boolean> {
+  const db = await getDb();
+  const now = Date.now();
+  const res = await db.execute({
+    sql: `INSERT INTO app_config (workspace, key, value, updated_at) VALUES (?, ?, ?, ?)
+          ON CONFLICT(workspace, key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+          WHERE CAST(app_config.value AS INTEGER) < ?`,
+    args: [workspace, KEYS.lock, JSON.stringify(until), now, now],
+  });
+  return res.rowsAffected > 0;
+}
+
+// ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------
 
 /**
  * One sync pass for a workspace: forward first (freshness wins), then the
  * backfill, then roll-ups for every day that changed, then the daily prune.
- * Never throws — errors are reported, and changed days are always queued.
+ * Skipped within SYNC_INTERVAL_MS of the last pass, or while another pass
+ * holds the lock. Never throws — errors are reported, and changed days are
+ * always queued.
  */
 export async function runCostSync(
   workspace: Workspace,
   apiKey: string,
   // pageSize: Retell page (500 keeps a cron page ~3.5 MB; the script uses 1000).
-  // rebuildTodayNow: skip today's roll-up throttle (the script, which runs until
-  // nothing is pending).
-  opts: { deadline: number; pageSize?: number; rebuildTodayNow?: boolean }
+  // unthrottled: skip SYNC_INTERVAL_MS and today's roll-up throttle (the
+  // script, which runs until nothing is pending).
+  opts: { deadline: number; pageSize?: number; unthrottled?: boolean }
 ): Promise<CostSyncResult> {
   const sync: SyncOpts = { deadline: opts.deadline, pageSize: opts.pageSize ?? 500 };
-  const dirty = new Set<string>();
   const result: CostSyncResult = {
     workspace,
     forward: { fetched: 0, done: false },
@@ -545,6 +592,17 @@ export async function runCostSync(
   };
 
   try {
+    if (!opts.unthrottled) {
+      const lastRunAt = await getAppConfig<number>(workspace, KEYS.lastRunAt);
+      if (lastRunAt && Date.now() - lastRunAt < SYNC_INTERVAL_MS) return { ...result, skipped: "throttled" };
+    }
+    if (!(await takeLock(workspace, opts.deadline + LOCK_GRACE_MS))) return { ...result, skipped: "locked" };
+  } catch (err) {
+    return { ...result, error: describe(err) };
+  }
+
+  try {
+    await setAppConfig(workspace, KEYS.lastRunAt, Date.now());
     // First sync ever: pin the backfill's starting point before the forward
     // cursor exists, so the two walks meet with no gap.
     if ((await getAppConfig<number>(workspace, KEYS.hwm)) == null) {
@@ -554,17 +612,20 @@ export async function runCostSync(
         await setAppConfig(workspace, KEYS.backfillCursor, now);
       }
     }
-    result.forward = await syncForward(workspace, apiKey, sync, dirty);
-    result.backfill = await syncBackfill(workspace, apiKey, sync, dirty);
+    result.forward = await syncForward(workspace, apiKey, sync);
+    result.backfill = await syncBackfill(workspace, apiKey, sync);
   } catch (err) {
     result.error = describe(err);
   }
   try {
-    result.rollups = await refreshRollups(workspace, dirty, opts.deadline, opts.rebuildTodayNow ?? false);
+    result.rollups = await refreshRollups(workspace, opts.deadline, opts.unthrottled ?? false);
     result.pruned = await pruneRawRows(workspace, opts.deadline);
   } catch (err) {
     result.error ??= describe(err);
   }
+  // Both blocks above catch everything, so this always runs. If the release
+  // itself fails, the lock lapses at its expiry.
+  await setAppConfig(workspace, KEYS.lock, 0).catch(() => undefined);
   return result;
 }
 

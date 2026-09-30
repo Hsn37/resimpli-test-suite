@@ -54,9 +54,11 @@ Retell v3/list-calls ─► call_costs        one row per call, every workspace,
 Days are US Central calendar days (`COST_TIMEZONE` in `src/lib/costs.ts`),
 assigned per call at sync time, so DST is handled once and every viewer sees
 the same "Sep 30". The cron tick (`/api/cron/tick`, `CRON_SECRET` required)
-syncs all four workspaces: forward from a high-water mark that never passes an
-in-progress call, a resumable backfill to `COST_HISTORY_START`, roll-up
-rebuilds for changed days (today at most every 5 min), then a daily prune.
+syncs all four workspaces at most every 15 min (`SYNC_INTERVAL_MS`), one run
+per workspace at a time (an `app_config` lock): forward from a high-water mark
+that never passes an in-progress call, a resumable backfill to
+`COST_HISTORY_START`, roll-up rebuilds for days queued before their rows are
+written (today at most every 5 min), then a daily prune.
 First load or a deeper history is faster locally:
 `npx tsx --conditions=react-server scripts/backfill-costs.ts [--since YYYY-MM-DD]`.
 Bump `ROLLUP_VERSION` in `costSync.ts` to rebuild roll-ups after changing

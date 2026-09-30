@@ -21,6 +21,7 @@ import { extendCostHistory, getCostSyncStates, runCostSync } from "../src/lib/co
 import { costDayStartMs, isDay } from "../src/lib/costs";
 
 const MAX_CONSECUTIVE_FAILURES = 5;
+const LOCK_WAIT_MS = 10_000;
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -36,8 +37,15 @@ async function backfill(workspace: Workspace, sinceMs: number | null) {
     const r = await runCostSync(workspace, apiKey, {
       deadline: Date.now() + 60_000,
       pageSize: 1000,
-      rebuildTodayNow: true,
+      unthrottled: true,
     });
+    if (r.skipped) {
+      // The cron (or another script) is mid-run on this workspace; its lock
+      // lapses within a minute or two.
+      console.log(`[${workspace}] another sync holds the lock — waiting`);
+      await new Promise((res) => setTimeout(res, LOCK_WAIT_MS));
+      continue;
+    }
     if (r.error) {
       // Transient network / Retell errors: both cursors are saved per page, so
       // back off and resume rather than abandoning a long backfill.
