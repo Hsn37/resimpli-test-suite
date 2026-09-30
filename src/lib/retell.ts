@@ -96,6 +96,42 @@ export async function listCalls(
   return res.json();
 }
 
+// v3 list-calls: typed filters ({type:"range", op:"bt", value:[lo, hi]}) and an
+// explicit has_more flag, which v2 lacks. Used by the cost sync (costSync.ts).
+export interface ListCallsV3Response {
+  items: Record<string, unknown>[];
+  has_more: boolean;
+  pagination_key?: string;
+}
+
+export async function listCallsV3(
+  body: {
+    limit?: number;
+    pagination_key?: string;
+    filter_criteria?: Record<string, unknown>;
+    sort_order?: "ascending" | "descending";
+  },
+  apiKey: string,
+  signal?: AbortSignal
+): Promise<ListCallsV3Response> {
+  const res = await fetch(`${RETELL_BASE_URL}/v3/list-calls`, {
+    method: "POST",
+    headers: headers(apiKey),
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Retell v3 list-calls error ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  return {
+    items: Array.isArray(data?.items) ? data.items : [],
+    has_more: data?.has_more === true,
+    pagination_key: typeof data?.pagination_key === "string" ? data.pagination_key : undefined,
+  };
+}
+
 export async function getCall(callId: string, apiKey: string) {
   const res = await fetch(`${RETELL_BASE_URL}/v2/get-call/${callId}`, {
     method: "GET",

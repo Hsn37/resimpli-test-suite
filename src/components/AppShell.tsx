@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { UserButton, useUser } from "@clerk/nextjs";
 import {
   BarChart3,
+  CircleDollarSign,
   PhoneCall,
   History,
   FlaskConical,
@@ -32,7 +33,8 @@ interface NavItem {
 
 // Nav order per spec. Admin entries are gated below via isAdminEmail.
 const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: BarChart3 },
+  { href: "/dashboard", label: "Performance Dashboard", icon: BarChart3 },
+  { href: "/costs", label: "Costs Dashboard", icon: CircleDollarSign },
   { href: "/test", label: "Test Call", icon: PhoneCall },
   { href: "/calls", label: "Calls", icon: History },
   { href: "/call-search", label: "Call Search", icon: Search },
@@ -67,7 +69,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
             key={item.href}
             href={item.href}
             onClick={onNavigate}
-            className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors ${
               active
                 ? "bg-blue-600 text-white"
                 : "text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900"
