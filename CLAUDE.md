@@ -36,6 +36,32 @@ exports the library as JSON (an archive you can commit) or as the QA-sheet CSV.
 Full playbook — variable tiers, agent-version diffing, the Inbound v2.3
 specifics: the `test-suite-cases` skill in `.claude/skills/`.
 
+## Cost dashboard (`/costs`)
+
+Retell spend per workspace and per agent, open to every signed-in user (not
+admin-only — it shows spend, never call content). Retell has no account-level
+billing API: cost comes from each call's `call_cost` (cents), fetched with
+`POST /v3/list-calls`. Twilio telephony is billed outside Retell and is not
+included.
+
+```
+Retell v3/list-calls ─► call_costs        one row per call, every workspace,
+                                          kept RAW_RETENTION_DAYS (12 months)
+                     ─► call_cost_daily   workspace × day × agent roll-up,
+                                          kept forever; the page reads only this
+```
+
+Days are US Central calendar days (`COST_TIMEZONE` in `src/lib/costs.ts`),
+assigned per call at sync time, so DST is handled once and every viewer sees
+the same "Sep 30". The cron tick (`/api/cron/tick`, `CRON_SECRET` required)
+syncs all four workspaces: forward from a high-water mark that never passes an
+in-progress call, a resumable backfill to `COST_HISTORY_START`, roll-up
+rebuilds for changed days (today at most every 5 min), then a daily prune.
+First load or a deeper history is faster locally:
+`npx tsx --conditions=react-server scripts/backfill-costs.ts [--since YYYY-MM-DD]`.
+Bump `ROLLUP_VERSION` in `costSync.ts` to rebuild roll-ups after changing
+their shape.
+
 ## Other conventions
 
 Batch/simulation test cases (`test_case_sets`, `/batch-tests`) are a separate

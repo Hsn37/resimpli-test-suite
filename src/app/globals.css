@@ -3,6 +3,12 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* Categorical chart slots (cost dashboard: one per workspace, fixed order).
+     Validated for CVD separation in both modes; dark uses its own steps. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
 }
 
 @theme inline {
@@ -17,6 +23,10 @@
     --background: #0a0a0a;
     --foreground: #ededed;
     --track-bg: #3f3f46;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
   }
 
   /* Render native date controls dark so the calendar-picker icon (and the

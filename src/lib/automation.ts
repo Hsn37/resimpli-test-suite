@@ -1,4 +1,5 @@
 import "server-only";
+import { timingSafeEqual } from "node:crypto";
 import { getAppConfig, setAppConfig } from "./db";
 import { APP_CONFIG_KEYS } from "./graderRubric";
 import type { Workspace } from "./workspace";
@@ -12,7 +13,6 @@ export const LAST_VOICE_SYNC_KEY = "last_voice_sync_at";
 export const LAST_TICK_KEY = "last_tick_at";
 export const VOICE_SYNC_INTERVAL_MS = 60 * 60 * 1000; // opportunistic, hourly
 export const CRON_SECRET_HEADER = "x-cron-secret";
-export const VERCEL_CRON_HEADER = "x-vercel-cron";
 const CRON_SECRET_ENV = "CRON_SECRET";
 
 /** Whether automation is enabled for a workspace (default true unless === false). */
@@ -38,17 +38,22 @@ export async function isVoiceSyncDue(workspace: Workspace): Promise<boolean> {
 }
 
 /**
- * Guard the cron route: allow either a matching CRON_SECRET header/query, or the
- * Vercel cron header (which Vercel sets on scheduled invocations). When
- * CRON_SECRET is unset we still require the Vercel header, so the route is never
- * publicly triggerable by default.
+ * Guard the cron route: the caller must present CRON_SECRET, as
+ * `Authorization: Bearer <secret>` (what Vercel Cron sends), an
+ * `x-cron-secret` header, or a `?secret=` query param. With CRON_SECRET unset
+ * nothing is authorized. There is deliberately no header-only bypass: an
+ * `x-vercel-cron` header can be sent by anyone, and each tick now pulls
+ * several MB from Retell per workspace.
  */
 export function isCronAuthorized(headers: Headers, secretParam: string | null): boolean {
-  if (headers.get(VERCEL_CRON_HEADER)) return true;
   const secret = process.env[CRON_SECRET_ENV];
   if (!secret) return false;
-  const provided = headers.get(CRON_SECRET_HEADER) ?? secretParam;
-  return provided === secret;
+  const bearer = headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const provided = bearer ?? headers.get(CRON_SECRET_HEADER) ?? secretParam;
+  if (!provided) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(secret);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** Stamp the last time the cron tick touched this workspace (epoch ms). */

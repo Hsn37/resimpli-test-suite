@@ -386,6 +386,60 @@ function ensureSchema(): Promise<void> {
          ON test_preset_revisions (preset_id, created_at DESC)`
       ),
     ]);
+
+    // Cost dashboard (/costs). One slim row per Retell call across EVERY
+    // workspace — unlike `calls`, nothing is filtered out (short, unconnected,
+    // outbound and non-allowlisted calls all cost money). Synced by
+    // costSync.ts, which also maintains the call_cost_daily roll-up the page
+    // actually reads. cost_cents is Retell's call_cost.combined_cost; products
+    // is a JSON {product: cents} map. Rows older than RAW_RETENTION_DAYS are
+    // pruned; the roll-ups are kept forever.
+    await db.execute(
+      `CREATE TABLE IF NOT EXISTS call_costs (
+        call_id             TEXT PRIMARY KEY,
+        workspace           TEXT NOT NULL,
+        agent_id            TEXT,
+        agent_name          TEXT,
+        agent_version       INTEGER,
+        direction           TEXT,
+        call_status         TEXT,
+        disconnection_reason TEXT,
+        start_ts            INTEGER NOT NULL,
+        duration_ms         INTEGER,
+        billed_sec          INTEGER,
+        cost_cents          REAL,
+        products            TEXT,
+        updated_at          INTEGER
+      )`
+    );
+    // The report reads call_cost_daily, so raw rows are only ever read by
+    // workspace + time window (roll-up refresh, partial-day comparison, prune).
+    // Replaces the wide covering index the first version scanned per page load.
+    await db.execute(`DROP INDEX IF EXISTS call_costs_range`);
+    await db.execute(
+      `CREATE INDEX IF NOT EXISTS call_costs_ws_start ON call_costs (workspace, start_ts)`
+    );
+    // One row per workspace × reporting-timezone day × agent (agent_id '' when
+    // Retell had none). Rebuilt from call_costs for each day the sync touches.
+    // min/max/sum durations cover connected (status = ended) calls only.
+    await db.execute(
+      `CREATE TABLE IF NOT EXISTS call_cost_daily (
+        day          TEXT NOT NULL,
+        workspace    TEXT NOT NULL,
+        agent_id     TEXT NOT NULL,
+        agent_name   TEXT,
+        calls        INTEGER NOT NULL,
+        connected    INTEGER NOT NULL,
+        billed_sec   INTEGER NOT NULL,
+        cost_cents   REAL NOT NULL,
+        conn_ms      INTEGER NOT NULL,
+        min_conn_ms  INTEGER,
+        max_conn_ms  INTEGER,
+        products     TEXT,
+        updated_at   INTEGER,
+        PRIMARY KEY (day, workspace, agent_id)
+      )`
+    );
     await seedGraderRubric(db);
   })();
   schemaReady = ready;
