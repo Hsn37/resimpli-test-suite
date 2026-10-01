@@ -18,6 +18,7 @@ import {
   type CostReport,
   type DayRange,
 } from "./costs";
+import { WORKSPACES } from "./workspace";
 
 // Aggregates the call_cost_daily roll-up for the /costs page (one row per
 // workspace × day × agent, maintained by costSync.ts) — a few thousand rows
@@ -53,6 +54,11 @@ export async function getCostReport(range: DayRange, agent: CostAgentFilter | nu
   });
   const cur = where(range.from, range.to);
   const prev = where(prevFrom, prevPartial ? addDays(prevTo, -1) : prevTo);
+  // Raw rows are indexed on (workspace, start_ts): always lead with a
+  // workspace predicate, or the partial-day read scans the whole index.
+  const rawScope = agent
+    ? { sql: `workspace = ? AND IFNULL(agent_id, '') = ?`, args: agentArgs }
+    : { sql: `workspace IN (${WORKSPACES.map(() => "?").join(", ")})`, args: [...WORKSPACES] };
 
   const [agents, daily, products, previous, prevPartialRows, sync] = await Promise.all([
     // Unfiltered: agent table + dropdown options. The newest name wins
@@ -93,9 +99,9 @@ export async function getCostReport(range: DayRange, agent: CostAgentFilter | nu
       ? db.execute({
           sql: `SELECT workspace, COUNT(*) AS calls, SUM(cost_cents) AS cents
                 FROM call_costs
-                WHERE start_ts >= ? AND start_ts < ?${agent ? ` AND workspace = ? AND IFNULL(agent_id, '') = ?` : ""}
+                WHERE ${rawScope.sql} AND start_ts >= ? AND start_ts < ?
                 GROUP BY workspace`,
-          args: [costDayStartMs(prevTo), partialEndMs, ...agentArgs],
+          args: [...rawScope.args, costDayStartMs(prevTo), partialEndMs],
         })
       : null,
     getCostSyncStates(),

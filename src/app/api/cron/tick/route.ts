@@ -26,10 +26,11 @@ const COST_SYNC_BUDGET_MS = 40_000;
 //   - idle + voice-sync due     → refresh the agent-voice cache (hourly)
 //
 // Separately, and for EVERY workspace (not only DASHBOARD_WORKSPACES), the
-// cost sync pulls new calls into call_costs for the /costs page, advances its
-// history backfill, rebuilds the daily roll-ups the page reads and prunes old
-// call rows. It ignores the automation pause — spend tracking has nothing to
-// do with grading.
+// cost sync (at most every 15 min — it skips the ticks in between, see
+// SYNC_INTERVAL_MS in costSync.ts) pulls new calls into call_costs for the
+// /costs page, advances its history backfill, rebuilds the daily roll-ups the
+// page reads and prunes old call rows. It ignores the automation pause —
+// spend tracking has nothing to do with grading.
 //
 // Guarded by CRON_SECRET (Bearer / x-cron-secret header / ?secret=) — never
 // publicly triggerable. GET and POST both supported (Vercel cron issues GET).
