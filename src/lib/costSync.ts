@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { getAppConfig, getDb, setAppConfig } from "./db";
 import { listCallsV3 } from "./retell";
 import {
@@ -541,21 +542,38 @@ async function pruneRawRows(workspace: Workspace, deadline: number): Promise<num
  * Claim the workspace's sync lock until `until` (epoch ms). Cron ticks, a
  * second deployment and the backfill script can overlap; two runs would race
  * on the roll-up queue and could write a stale roll-up over a fresh one. The
- * lock is an app_config row holding its expiry, claimed in one statement, so
- * a run that dies simply lets it lapse.
+ * lock is an app_config row holding {until, owner}, claimed in one statement,
+ * so a run that dies simply lets it lapse. Returns this run's owner token, or
+ * null if another run holds the lock. (The COALESCE also reads the plain
+ * epoch-ms values written before the lock carried an owner.)
  */
-async function takeLock(workspace: Workspace, until: number): Promise<boolean> {
+async function takeLock(workspace: Workspace, until: number): Promise<string | null> {
   const db = await getDb();
   const now = Date.now();
+  const owner = randomUUID();
   const res = await db.execute({
     sql: `INSERT INTO app_config (workspace, key, value, updated_at) VALUES (?, ?, ?, ?)
           ON CONFLICT(workspace, key) DO UPDATE SET
             value = excluded.value,
             updated_at = excluded.updated_at
-          WHERE CAST(app_config.value AS INTEGER) < ?`,
-    args: [workspace, KEYS.lock, JSON.stringify(until), now, now],
+          WHERE COALESCE(json_extract(app_config.value, '$.until'), CAST(app_config.value AS INTEGER)) < ?`,
+    args: [workspace, KEYS.lock, JSON.stringify({ until, owner }), now, now],
   });
-  return res.rowsAffected > 0;
+  return res.rowsAffected > 0 ? owner : null;
+}
+
+/**
+ * Release the lock only if this run still owns it. A run that overran its
+ * lock may find another run has since claimed it; clearing that would let a
+ * third run start alongside the second.
+ */
+async function releaseLock(workspace: Workspace, owner: string): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `UPDATE app_config SET value = '0', updated_at = ?
+          WHERE workspace = ? AND key = ? AND json_extract(value, '$.owner') = ?`,
+    args: [Date.now(), workspace, KEYS.lock, owner],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -591,12 +609,14 @@ export async function runCostSync(
     return err instanceof Error ? `${err.message}${cause}` : "cost sync failed";
   };
 
+  let owner: string | null;
   try {
     if (!opts.unthrottled) {
       const lastRunAt = await getAppConfig<number>(workspace, KEYS.lastRunAt);
       if (lastRunAt && Date.now() - lastRunAt < SYNC_INTERVAL_MS) return { ...result, skipped: "throttled" };
     }
-    if (!(await takeLock(workspace, opts.deadline + LOCK_GRACE_MS))) return { ...result, skipped: "locked" };
+    owner = await takeLock(workspace, opts.deadline + LOCK_GRACE_MS);
+    if (!owner) return { ...result, skipped: "locked" };
   } catch (err) {
     return { ...result, error: describe(err) };
   }
@@ -625,7 +645,7 @@ export async function runCostSync(
   }
   // Both blocks above catch everything, so this always runs. If the release
   // itself fails, the lock lapses at its expiry.
-  await setAppConfig(workspace, KEYS.lock, 0).catch(() => undefined);
+  await releaseLock(workspace, owner).catch(() => undefined);
   return result;
 }
 
