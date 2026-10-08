@@ -13,7 +13,9 @@
   "dependencies": {
     "@clerk/nextjs": "^7.4.1",
     "@libsql/client": "^0.17.3",
+    "js-tiktoken": "^1.0.21",
     "lucide-react": "^1.16.0",
+    "mongodb": "^7.7.0",
     "next": "16.2.6",
     "openai": "^6.48.0",
     "react": "19.2.4",

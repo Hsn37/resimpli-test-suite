@@ -10,6 +10,8 @@ import {
 } from "@/lib/automation";
 import { runBackfill, runGradePending, runVoiceSync } from "@/lib/ingestionJobs";
 import { runCostSync, type CostSyncResult } from "@/lib/costSync";
+import { runOpenAiCostSync } from "@/lib/openaiCosts";
+import { runAiUsageSync } from "@/lib/aiUsageSync";
 
 // Grades run in parallel now, but a single slow OpenAI call can still take its
 // full 30s timeout — give the tick headroom so a slow wave isn't killed midway.
@@ -30,7 +32,10 @@ const COST_SYNC_BUDGET_MS = 40_000;
 // SYNC_INTERVAL_MS in costSync.ts) pulls new calls into call_costs for the
 // /costs page, advances its history backfill, rebuilds the daily roll-ups the
 // page reads and prunes old call rows. It ignores the automation pause —
-// spend tracking has nothing to do with grading.
+// spend tracking has nothing to do with grading. Alongside it, the OpenAI
+// spend sync (openaiCosts.ts) runs at most hourly once OPENAI_API_ADMIN_KEY
+// is set, and the backend AI-usage sync (aiUsageSync.ts) at most every 30 min
+// once AI_AUDIT_MONGO_URL is set.
 //
 // Guarded by CRON_SECRET (Bearer / x-cron-secret header / ?secret=) — never
 // publicly triggerable. GET and POST both supported (Vercel cron issues GET).
@@ -91,6 +96,12 @@ async function handle(request: NextRequest) {
       }
     })
   );
+  const openaiPromise = runOpenAiCostSync({ deadline }).catch((err) => ({
+    error: err instanceof Error ? err.message : "openai cost sync failed",
+  }));
+  const aiUsagePromise = runAiUsageSync({ deadline }).catch((err) => ({
+    error: err instanceof Error ? err.message : "AI usage sync failed",
+  }));
   const ticks = await Promise.all(
     DASHBOARD_WORKSPACES.map(async (workspace): Promise<WorkspaceTick> => {
       await recordTick(workspace);
@@ -105,8 +116,8 @@ async function handle(request: NextRequest) {
       }
     })
   );
-  const costs = await costsPromise;
-  return NextResponse.json({ ok: true, ticks, costs });
+  const [costs, openai, aiUsage] = await Promise.all([costsPromise, openaiPromise, aiUsagePromise]);
+  return NextResponse.json({ ok: true, ticks, costs, openai, aiUsage });
 }
 
 export async function GET(request: NextRequest) {

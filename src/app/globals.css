@@ -9,6 +9,9 @@
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-other: #a1a1aa; /* neutral: the "Other" fold, never a 7th hue */
 }
 
 @theme inline {
@@ -27,6 +30,9 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-other: #71717a;
   }
 
   /* Render native date controls dark so the calendar-picker icon (and the
