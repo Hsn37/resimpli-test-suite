@@ -275,12 +275,20 @@ export function defaultGranularity(range: DayRange): CostGranularity {
   return "month";
 }
 
+/** One day of spend for one chart series (a workspace, an OpenAI project…). */
+export interface TrendRow {
+  day: string;
+  series: string;
+  cents: number;
+  count: number; // calls / requests
+}
+
 export interface CostTrendPoint {
   key: string;
   label: string;
-  total: number; // cents across the shown workspaces
-  calls: number;
-  byWorkspace: Partial<Record<Workspace, number>>; // cents
+  total: number; // cents across the shown series
+  count: number;
+  bySeries: Record<string, number>; // cents
 }
 
 function bucketStart(day: string, g: CostGranularity): string {
@@ -312,25 +320,36 @@ export function costPeriodLabel(start: string, g: CostGranularity): string {
  * window (zero-filled) so gaps read as "no spend" rather than vanishing.
  */
 export function buildCostTrend(
-  daily: CostDailyRow[],
+  rows: TrendRow[],
   range: DayRange,
   granularity: CostGranularity,
-  workspaces: readonly Workspace[]
+  series: readonly string[]
 ): CostTrendPoint[] {
   const points = new Map<string, CostTrendPoint>();
   for (let cur = bucketStart(range.from, granularity); cur <= range.to; cur = bucketNext(cur, granularity)) {
-    points.set(cur, { key: cur, label: costPeriodLabel(cur, granularity), total: 0, calls: 0, byWorkspace: {} });
+    points.set(cur, { key: cur, label: costPeriodLabel(cur, granularity), total: 0, count: 0, bySeries: {} });
   }
-  const shown = new Set(workspaces);
-  for (const row of daily) {
-    if (!shown.has(row.workspace)) continue;
+  const shown = new Set(series);
+  for (const row of rows) {
+    if (!shown.has(row.series)) continue;
     const p = points.get(bucketStart(row.day, granularity));
     if (!p) continue;
     p.total += row.cents;
-    p.calls += row.calls;
-    p.byWorkspace[row.workspace] = (p.byWorkspace[row.workspace] ?? 0) + row.cents;
+    p.count += row.count;
+    p.bySeries[row.series] = (p.bySeries[row.series] ?? 0) + row.cents;
   }
   return [...points.values()];
+}
+
+/** A chart series: its key in the trend rows, legend label and colour. */
+export interface ChartSeries {
+  key: string;
+  label: string;
+  color: string;
+}
+
+export function workspaceSeries(workspaces: readonly Workspace[]): ChartSeries[] {
+  return workspaces.map((ws) => ({ key: ws, label: workspaceLabel(ws), color: WORKSPACE_COLOR_VAR[ws] }));
 }
 
 /** "Sep 1 – Sep 30, 2026" for a day range. */
@@ -427,4 +446,205 @@ export function fmtMinutes(seconds: number): string {
 
 export function fmtInt(n: number): string {
   return n.toLocaleString("en-US");
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI (GET /api/costs/openai) — organization Costs + Usage APIs
+// ---------------------------------------------------------------------------
+// OpenAI buckets by UTC day, so its days are UTC calendar days, compared
+// against the same YYYY-MM-DD range strings as Retell's US Central days.
+
+export interface OpenAiDailyRow {
+  day: string; // YYYY-MM-DD, UTC
+  projectId: string;
+  cents: number;
+  requests: number;
+}
+
+export interface OpenAiProjectRow {
+  projectId: string; // '' = usage OpenAI attributes to no project
+  name: string | null;
+  archived: boolean;
+  cents: number;
+  allTimeCents: number; // colour order: stable across timeline changes
+  requests: number;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+}
+
+export interface OpenAiLineItemRow {
+  projectId: string;
+  lineItem: string; // e.g. "gpt-5.4-mini, input"
+  cents: number;
+}
+
+export interface OpenAiKeyRow {
+  projectId: string;
+  apiKeyId: string; // '' = not attributed to a key
+  apiKeyName: string | null;
+  model: string;
+  requests: number;
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+}
+
+export interface OpenAiCostReport {
+  configured: boolean; // an Admin key, the backend audit log or PromptLayer is available
+  // openai_admin   — OpenAI's own billing (Costs/Usage APIs); projects are OpenAI projects.
+  // backend_audit  — the backend's AiAgentAudit token log × model rates; "projects" are features.
+  // promptlayer    — PromptLayer's observed stage activity.
+  source: "openai_admin" | "backend_audit" | "promptlayer" | "none";
+  fromDay: string;
+  toDay: string;
+  lastSyncOkAt: number | null;
+  lastError: string | null;
+  earliestDay: string | null; // first day the sync has loaded
+  daily: OpenAiDailyRow[];
+  projects: OpenAiProjectRow[];
+  lineItems: OpenAiLineItemRow[];
+  keys: OpenAiKeyRow[];
+  // Comparison on COMPLETE days only (today's UTC bucket is still filling):
+  // `comparable` = this range's complete days, `previous` = the same number of
+  // days right before. Per project so a project filter can reuse it.
+  comparison: { days: number; byProject: { projectId: string; comparable: number; previous: number }[] } | null;
+  promptLayer: PromptLayerCostReport | null;
+  audit: AiAuditMeta | null; // set when source = backend_audit
+}
+
+/** Context for an estimate built from the backend's AiAgentAudit log. */
+export interface AiAuditMeta {
+  database: string; // which backend database was read, e.g. "stage_resimpli"
+  unpricedModels: string[]; // models with calls but no rate below (tokens shown, $ excluded)
+}
+
+// ---------------------------------------------------------------------------
+// Model rates (USD per 1M tokens) for token-based estimates
+// ---------------------------------------------------------------------------
+// The backend's models, at the effective standard rates PromptLayer priced
+// this workspace's requests at (verified to floating-point precision on
+// 2026-10-08). Matched by prefix, so dated snapshots ("gpt-5.4-nano-2026-03-17")
+// resolve; longest prefix wins. Cached-input discounts aren't applied — the
+// audit log doesn't record cached tokens — so estimates lean high.
+export const AI_MODEL_RATES: readonly { prefix: string; input: number; output: number }[] = [
+  { prefix: "gpt-5.4-mini", input: 0.75, output: 4.5 },
+  { prefix: "gpt-5.4-nano", input: 0.2, output: 1.25 },
+];
+
+export function modelRate(model: string): { input: number; output: number } | null {
+  let best: (typeof AI_MODEL_RATES)[number] | null = null;
+  for (const r of AI_MODEL_RATES) {
+    if (model.startsWith(r.prefix) && (!best || r.prefix.length > best.prefix.length)) best = r;
+  }
+  return best;
+}
+
+/** Estimated cents for a token count on a model, or null when the model has no rate. */
+export function tokenCostCents(model: string, inputTokens: number, outputTokens: number): number | null {
+  const r = modelRate(model);
+  if (!r) return null;
+  return ((inputTokens * r.input + outputTokens * r.output) * 100) / 1_000_000;
+}
+
+export interface PromptLayerDailyRow {
+  day: string; // YYYY-MM-DD, UTC
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  thinkingTokens: number;
+  cents: number;
+}
+
+export interface PromptLayerModelRow {
+  model: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cents: number;
+}
+
+export interface PromptLayerPromptRow {
+  templateId: string;
+  name: string;
+  requests: number;
+  tokens: number;
+  cents: number;
+}
+
+export interface PromptLayerTemplateEstimate {
+  templateId: string;
+  feature: string;
+  name: string;
+  version: number | null;
+  model: string;
+  staticInputTokens: number;
+  maxOutputTokens: number;
+  lowerBoundCents: number | null;
+  error: string | null;
+}
+
+/**
+ * PromptLayer fallback for the OpenAI tab. Observed rows are exact for calls
+ * logged in this PromptLayer workspace. Template estimates are deliberately a
+ * lower bound: they count static instructions, not runtime CRM/transcript data.
+ */
+export interface PromptLayerCostReport {
+  workspace: "stage";
+  requestedFromDay: string;
+  observedFromDay: string;
+  toDay: string;
+  analyticsStartDay: string;
+  fetchedAt: number;
+  stale: boolean;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  thinkingTokens: number;
+  cents: number;
+  daily: PromptLayerDailyRow[];
+  models: PromptLayerModelRow[];
+  prompts: PromptLayerPromptRow[];
+  templates: PromptLayerTemplateEstimate[];
+  history: {
+    fromDay: string;
+    toDay: string;
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+    cents: number;
+  } | null;
+  warning: string | null;
+}
+
+/** Split a Costs API line item ("gpt-5.4-mini, input") into model + charge kind. */
+export function splitLineItem(lineItem: string): { model: string; kind: string } {
+  const i = lineItem.lastIndexOf(",");
+  return i < 0 ? { model: lineItem, kind: "" } : { model: lineItem.slice(0, i).trim(), kind: lineItem.slice(i + 1).trim() };
+}
+
+/** Today as a UTC day — the OpenAI side's "today". */
+export function utcToday(now = Date.now()): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+// Projects get categorical slots 1–6 by all-time spend; the rest fold into
+// "Other" so a chart never needs a generated 9th hue.
+export const OPENAI_SERIES_SLOTS = 6;
+export const SERIES_COLOR_VARS = [
+  "var(--series-1)",
+  "var(--series-2)",
+  "var(--series-3)",
+  "var(--series-4)",
+  "var(--series-5)",
+  "var(--series-6)",
+];
+export const OTHER_SERIES_COLOR = "var(--series-other)";
+export const OTHER_SERIES_KEY = "__other__";
+
+export function openAiProjectLabel(p: { projectId: string; name: string | null }): string {
+  if (!p.projectId) return "No project";
+  return p.name || p.projectId;
 }

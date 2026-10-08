@@ -440,6 +440,97 @@ function ensureSchema(): Promise<void> {
         PRIMARY KEY (day, workspace, agent_id)
       )`
     );
+
+    // OpenAI spend (/costs → OpenAI), synced by openaiCosts.ts from the
+    // organization Costs / Usage APIs. OpenAI reports by UTC day. Costs are
+    // the billed dollars (stored as cents) per project × line item; usage is
+    // requests + tokens per project × model × API key ('' when OpenAI gives
+    // none). Each synced day is replaced whole, so re-syncing is idempotent.
+    await Promise.all([
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS openai_cost_daily (
+          day         TEXT NOT NULL,
+          project_id  TEXT NOT NULL,
+          line_item   TEXT NOT NULL,
+          cost_cents  REAL NOT NULL,
+          updated_at  INTEGER,
+          PRIMARY KEY (day, project_id, line_item)
+        )`
+      ),
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS openai_usage_daily (
+          day            TEXT NOT NULL,
+          project_id     TEXT NOT NULL,
+          model          TEXT NOT NULL,
+          api_key_id     TEXT NOT NULL,
+          requests       INTEGER NOT NULL,
+          input_tokens   INTEGER NOT NULL,
+          cached_tokens  INTEGER NOT NULL,
+          output_tokens  INTEGER NOT NULL,
+          updated_at     INTEGER,
+          PRIMARY KEY (day, project_id, model, api_key_id)
+        )`
+      ),
+      // Display names for project / API-key ids (kind = 'project' | 'api_key').
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS openai_names (
+          kind        TEXT NOT NULL,
+          id          TEXT NOT NULL,
+          name        TEXT,
+          project_id  TEXT,
+          status      TEXT,
+          updated_at  INTEGER,
+          PRIMARY KEY (kind, id)
+        )`
+      ),
+      // Single row: when the sync last ran / succeeded, and its last error.
+      // last_run_at doubles as the hourly claim, so overlapping ticks skip.
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS openai_cost_sync (
+          id           INTEGER PRIMARY KEY CHECK (id = 1),
+          last_run_at  INTEGER,
+          last_ok_at   INTEGER,
+          last_error   TEXT
+        )`
+      ),
+      // Short-lived server cache for PromptLayer analytics and tokenized
+      // templates. Range reports are expensive external requests and
+      // PromptLayer rate-limits request-log search/analytics, so authenticated
+      // dashboard traffic must not fan out directly to the provider.
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS promptlayer_cache (
+          cache_key   TEXT PRIMARY KEY,
+          payload     TEXT NOT NULL,
+          fetched_at  INTEGER NOT NULL
+        )`
+      ),
+      // Backend AI usage (aiUsageSync.ts): the ReSimpli backend's own
+      // AiAgentAudit log (one Mongo doc per OpenAI call, with token counts),
+      // aggregated per US Central day × feature (agentType) × model. Each
+      // synced day is replaced whole. Dollars are derived at read time from
+      // AI_MODEL_RATES, so a rate change needs no resync.
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS ai_usage_daily (
+          day            TEXT NOT NULL,
+          feature        TEXT NOT NULL,
+          model          TEXT NOT NULL,
+          calls          INTEGER NOT NULL,
+          input_tokens   INTEGER NOT NULL,
+          output_tokens  INTEGER NOT NULL,
+          updated_at     INTEGER,
+          PRIMARY KEY (day, feature, model)
+        )`
+      ),
+      db.execute(
+        `CREATE TABLE IF NOT EXISTS ai_usage_sync (
+          id           INTEGER PRIMARY KEY CHECK (id = 1),
+          last_run_at  INTEGER,
+          last_ok_at   INTEGER,
+          last_error   TEXT,
+          database     TEXT
+        )`
+      ),
+    ]);
     await seedGraderRubric(db);
   })();
   schemaReady = ready;

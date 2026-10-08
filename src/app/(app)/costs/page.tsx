@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowDown, ArrowUp, Download, Info, Loader2, Search } from "lucide-react";
-import CostTrendChart from "./CostTrendChart";
+import SpendChart from "./SpendChart";
+import OpenAiCosts from "./OpenAiCosts";
 import { BAD_TEXT, GOOD_TEXT, fmtSeconds } from "@/lib/dashboard";
 import {
   COST_PRESETS,
@@ -14,6 +15,7 @@ import {
   WORKSPACE_COLOR_VAR,
   agentFilterKey,
   buildCostTrend,
+  workspaceSeries,
   costDayStartMs,
   costToday,
   daysBetween,
@@ -31,6 +33,8 @@ import {
   type CostGranularity,
   type CostPreset,
   type CostReport,
+  type OpenAiCostReport,
+  openAiProjectLabel,
 } from "@/lib/costs";
 import type { Workspace } from "@/lib/workspace";
 
@@ -52,6 +56,12 @@ const AGENT_PREVIEW = 10;
 const AGENT_PAGE = 25;
 
 type WorkspaceFilter = "all" | Workspace;
+type Source = "retell" | "openai";
+
+const SOURCES: { key: Source; label: string }[] = [
+  { key: "retell", label: "Retell voice agents" },
+  { key: "openai", label: "OpenAI" },
+];
 
 interface Totals {
   calls: number;
@@ -107,6 +117,11 @@ export default function CostsPage() {
   const [wsFilter, setWsFilter] = useState<WorkspaceFilter>("all");
   // "" = all agents, else "<workspace>:<agentId>" (agentFilterKey).
   const [agentKey, setAgentKey] = useState("");
+  const [source, setSource] = useState<Source>("retell");
+  // OpenAI project filter (null = all projects).
+  const [openAiProject, setOpenAiProject] = useState<string | null>(null);
+  const [openAi, setOpenAi] = useState<{ key: string; report: OpenAiCostReport } | null>(null);
+  const [openAiError, setOpenAiError] = useState<{ key: string; message: string } | null>(null);
   const [granularityPick, setGranularityPick] = useState<{ rangeKey: string; g: CostGranularity } | null>(null);
   const [result, setResult] = useState<{ key: string; report: CostReport; fetchedAt: number } | null>(null);
   // Keyed to the request that failed, so a later filter change shows its own
@@ -155,10 +170,43 @@ export default function CostsPage() {
     };
   }, [range.from, range.to, agentKey, customInvalid]);
 
+  // OpenAI spend for the same timeline. Fetched whichever tab is open, so the
+  // header can show combined AI spend.
+  useEffect(() => {
+    if (customInvalid) return;
+    let cancelled = false;
+    const key = `${range.from}-${range.to}`;
+    fetch(`/api/costs/openai?from=${range.from}&to=${range.to}`)
+      .then(async (r) => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.error ?? "Failed to load OpenAI costs");
+        return data as OpenAiCostReport;
+      })
+      .then((report) => {
+        if (!cancelled) setOpenAi({ key, report });
+      })
+      .catch((e) => {
+        if (!cancelled) setOpenAiError({ key, message: e instanceof Error ? e.message : "Failed to load OpenAI costs" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [range.from, range.to, customInvalid]);
+
   const report = result?.report ?? null;
   const errorMessage = error?.key === fetchKey ? error.message : null;
   const loading = !customInvalid && result?.key !== fetchKey && !errorMessage;
   const granularity = granularityPick?.rangeKey === rangeKey ? granularityPick.g : defaultGranularity(range);
+  const openAiReport = openAi?.report ?? null;
+  const openAiErrorMessage = openAiError?.key === rangeKey ? openAiError.message : null;
+  const openAiLoading = !customInvalid && openAi?.key !== rangeKey && !openAiErrorMessage;
+
+  // Header strip: all AI spend in the range — every Retell workspace (the
+  // unfiltered agent list) plus every OpenAI project — regardless of filters.
+  const retellTotal = report ? report.agentOptions.reduce((s, a) => s + a.cents, 0) : null;
+  const openAiTotal =
+    openAiReport?.configured ? openAiReport.projects.reduce((s, p) => s + p.cents, 0) : null;
+  const openAiTotalLabel = openAiReport?.source === "promptlayer" ? "PromptLayer observed" : "OpenAI";
 
   // An agent lives in exactly one workspace, so selecting one narrows the
   // chart/breakdowns to that workspace's single series.
@@ -166,6 +214,7 @@ export default function CostsPage() {
     () => (agentFilter ? [agentFilter.workspace] : wsFilter === "all" ? COST_WORKSPACES : [wsFilter]),
     [wsFilter, agentFilter]
   );
+  const shownSeries = useMemo(() => workspaceSeries(shown), [shown]);
 
   // Agent dropdown: grouped by workspace, alphabetical within a group. The
   // options come from the unfiltered list, so they survive a selection.
@@ -195,7 +244,14 @@ export default function CostsPage() {
   );
   const trend = useMemo(
     () =>
-      report ? buildCostTrend(report.daily, { from: report.fromDay, to: report.toDay }, granularity, shown) : [],
+      report
+        ? buildCostTrend(
+            report.daily.map((r) => ({ day: r.day, series: r.workspace, cents: r.cents, count: r.calls })),
+            { from: report.fromDay, to: report.toDay },
+            granularity,
+            shown
+          )
+        : [],
     [report, granularity, shown]
   );
   const byWorkspace = useMemo(
@@ -258,21 +314,58 @@ export default function CostsPage() {
     setPreset(next);
   }
 
+  function showOpenAiRange(next: { from: string; to: string }) {
+    setCustomFrom(next.from);
+    setCustomTo(next.to);
+    setPreset("custom");
+  }
+
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Costs Dashboard</h1>
-          <p className="text-sm text-zinc-500 mt-0.5">
-            Retell spend across every workspace.
-          </p>
+          <p className="text-sm text-zinc-500 mt-0.5">AI spend across Retell and OpenAI.</p>
         </div>
         {report && (
           <div className="text-xs text-zinc-500 text-right">
             <div>
               {fmtDayRange({ from: report.fromDay, to: report.toDay })} · {COST_TIMEZONE_LABEL} time
             </div>
-            <div>{lastSync ? `Synced ${fmtAgo(lastSync, result!.fetchedAt)}` : "Not synced yet"}</div>
+            <div>{lastSync ? `Retell synced ${fmtAgo(lastSync, result!.fetchedAt)}` : "Not synced yet"}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Source switch + combined AI spend for the range */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div role="tablist" aria-label="Spend source" className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-800 p-0.5">
+          {SOURCES.map((s) => (
+            <button
+              key={s.key}
+              role="tab"
+              aria-selected={source === s.key}
+              onClick={() => setSource(s.key)}
+              className={`text-sm font-medium px-3 py-1.5 rounded-md transition-colors ${
+                source === s.key ? "bg-blue-600 text-white" : "text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        {retellTotal != null && (
+          <div className="text-sm text-zinc-600 dark:text-zinc-400 tabular-nums">
+            All tracked spend{" "}
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+              {fmtUsd(retellTotal + (openAiTotal ?? 0))}
+            </span>{" "}
+            <span className="text-xs">
+              (Retell {fmtUsd(retellTotal)}
+              {openAiTotal != null
+                ? ` · ${openAiTotalLabel} ${fmtUsd(openAiTotal)}`
+                : " · OpenAI not connected"})
+            </span>
           </div>
         )}
       </div>
@@ -301,6 +394,32 @@ export default function CostsPage() {
             </div>
           </>
         )}
+        {source === "openai" && (openAiReport?.source === "openai_admin" || openAiReport?.source === "backend_audit") && (
+          <div className="col-span-2">
+            <label htmlFor="cost-project" className={FIELD_LABEL}>
+              {openAiReport?.source === "backend_audit" ? "Feature" : "Project"}
+            </label>
+            <select
+              id="cost-project"
+              className={CONTROL}
+              value={openAiProject ?? "__all__"}
+              onChange={(e) => setOpenAiProject(e.target.value === "__all__" ? null : e.target.value)}
+            >
+              <option value="__all__">
+                {openAiReport?.source === "backend_audit" ? "All features" : "All projects"}
+              </option>
+              {[...(openAiReport?.projects ?? [])]
+                .sort((a, b) => openAiProjectLabel(a).localeCompare(openAiProjectLabel(b)))
+                .map((p) => (
+                  <option key={p.projectId || "none"} value={p.projectId}>
+                    {openAiProjectLabel(p)} · {fmtUsd(p.cents)}
+                  </option>
+                ))}
+            </select>
+          </div>
+        )}
+        {source === "retell" && (
+        <>
         <div>
           <label htmlFor="cost-workspace" className={FIELD_LABEL}>Workspace</label>
           <select id="cost-workspace" className={CONTROL} value={wsFilter} onChange={(e) => onWorkspace(e.target.value as WorkspaceFilter)}>
@@ -328,11 +447,15 @@ export default function CostsPage() {
             ))}
           </select>
         </div>
+        </>
+        )}
         {customInvalid && (
           <div className={`col-span-full text-xs ${BAD_TEXT}`}>&ldquo;To&rdquo; must be on or after &ldquo;From&rdquo;.</div>
         )}
       </div>
 
+      {source === "retell" ? (
+        <>
       {errorMessage && (
         <div role="alert" className={`${CARD} p-4 text-sm flex items-center gap-2 ${BAD_TEXT}`}>
           <AlertTriangle size={16} /> {errorMessage}
@@ -405,9 +528,9 @@ export default function CostsPage() {
             />
           </div>
 
-          <CostTrendChart
+          <SpendChart
             points={trend}
-            workspaces={shown}
+            series={shownSeries}
             granularity={granularity}
             onGranularity={(g) => setGranularityPick({ rangeKey, g })}
           />
@@ -520,6 +643,20 @@ export default function CostsPage() {
           />
         </div>
       ) : null}
+        </>
+      ) : (
+        <OpenAiCosts
+          report={openAiReport}
+          loading={openAiLoading}
+          error={openAiErrorMessage}
+          range={range}
+          project={openAiProject}
+          onProject={setOpenAiProject}
+          granularity={granularity}
+          onGranularity={(g) => setGranularityPick({ rangeKey, g })}
+          onShowRange={showOpenAiRange}
+        />
+      )}
     </div>
   );
 }

@@ -64,6 +64,40 @@ First load or a deeper history is faster locally:
 Bump `ROLLUP_VERSION` in `costSync.ts` to rebuild roll-ups after changing
 their shape.
 
+The page's **OpenAI** tab covers ReSimpli's direct OpenAI spend (the Retell
+agents' GPT usage is billed by Retell and lives in `call_cost`, so the two
+add up without double counting). When an organization Admin key is available,
+`openaiCosts.ts` syncs hourly from the
+organization Costs API (billed dollars per UTC day × project × line item) and
+Usage API (requests + tokens per project × model × API key) into
+`openai_cost_daily` / `openai_usage_daily`, plus `openai_names`. It needs an
+**Admin key** (`sk-admin-…`) in `OPENAI_API_ADMIN_KEY` — a project key gets
+403. Areas = OpenAI projects (real dollars); prompt types = separate API keys
+(usage only — OpenAI doesn't bill per key). Force a sync with
+`npx tsx --conditions=react-server scripts/sync-openai-costs.ts`.
+
+Without the Admin key, the OpenAI tab's next source is the **backend's own AI
+token log**: the ReSimpli API writes one `aiagentaudits` Mongo document per
+OpenAI call (model, input/output tokens, `agentType` = feature). Set
+`AI_AUDIT_MONGO_URL` (read-only; the database name in the URL is shown on the
+page, and stage-looking names get a "not production" warning) and
+`aiUsageSync.ts` aggregates it every 30 min into `ai_usage_daily` (US Central
+day × feature × model, dated by `_id` because the collection's `createdAt`
+default is broken). `aiUsageReport.ts` prices tokens with `AI_MODEL_RATES` in
+`costs.ts` at read time — estimates, not the invoice (no cached-token
+discount). Force a sync with
+`npx tsx --conditions=react-server scripts/sync-ai-usage.ts`.
+
+Without either, `PROMPTLAYER_API_KEY` enables a deliberately narrower
+fallback (`promptLayerCosts.ts`): exact observed request/token/price analytics
+from the stage PromptLayer workspace plus a live inventory of the templates
+referenced by the backend's `origin/stage-review` branch. Static instructions
+are counted with the GPT-5 tokenizer and priced as an **input floor per run**;
+runtime CRM/transcript context and output are excluded. PromptLayer analytics
+and templates are cached in `promptlayer_cache` to keep dashboard refreshes
+inside provider rate limits. The UI must keep this labeled as partial observed
+activity, never organization billing.
+
 ## Other conventions
 
 Batch/simulation test cases (`test_case_sets`, `/batch-tests`) are a separate

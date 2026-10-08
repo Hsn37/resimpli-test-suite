@@ -13,41 +13,44 @@ import {
 import { CHART_AXIS, CHART_GRID } from "@/lib/dashboard";
 import {
   COST_GRANULARITIES,
-  WORKSPACE_COLOR_VAR,
   fmtInt,
   fmtUsd,
-  workspaceLabel,
+  type ChartSeries,
   type CostGranularity,
   type CostTrendPoint,
 } from "@/lib/costs";
-import type { Workspace } from "@/lib/workspace";
 
 const TAB_ACTIVE = "bg-blue-600 text-white";
 const TAB_IDLE = "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900";
 
 interface Props {
   points: CostTrendPoint[];
-  workspaces: readonly Workspace[];
+  series: readonly ChartSeries[];
   granularity: CostGranularity;
   onGranularity: (g: CostGranularity) => void;
+  countNoun?: string; // what CostTrendPoint.count counts, for the tooltip
+  note?: string; // small caption under the legend
 }
 
-type Datum = { label: string; total: number; calls: number } & Partial<Record<Workspace, number>>;
+// Series values live under `s:<key>` so a series key can never collide with
+// the label/total/count fields.
+type Datum = { label: string; total: number; count: number } & Record<string, number | string>;
+const field = (key: string) => `s:${key}`;
 
-// Spend over time, stacked by workspace. Values are plotted in dollars; the
-// tooltip lists each workspace's share plus the bucket total and call count.
-export default function CostTrendChart({ points, workspaces, granularity, onGranularity }: Props) {
+// Spend over time, stacked by series (workspaces, OpenAI projects…). Values
+// are plotted in dollars; the tooltip lists each series plus the bucket total.
+export default function SpendChart({ points, series, granularity, onGranularity, countNoun = "calls", note }: Props) {
   const data = useMemo<Datum[]>(
     () =>
       points.map((p) => {
-        const d: Datum = { label: p.label, total: p.total / 100, calls: p.calls };
-        for (const ws of workspaces) d[ws] = (p.byWorkspace[ws] ?? 0) / 100;
+        const d: Datum = { label: p.label, total: p.total / 100, count: p.count };
+        for (const s of series) d[field(s.key)] = (p.bySeries[s.key] ?? 0) / 100;
         return d;
       }),
-    [points, workspaces]
+    [points, series]
   );
   const hasData = points.some((p) => p.total > 0);
-  const stacked = workspaces.length > 1;
+  const stacked = series.length > 1;
 
   return (
     <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
@@ -70,14 +73,15 @@ export default function CostTrendChart({ points, workspaces, granularity, onGran
       </div>
       {stacked && (
         <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 pb-2 text-xs text-zinc-600 dark:text-zinc-400">
-          {workspaces.map((ws) => (
-            <span key={ws} className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: WORKSPACE_COLOR_VAR[ws] }} />
-              {workspaceLabel(ws)}
+          {series.map((s) => (
+            <span key={s.key} className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
+              {s.label}
             </span>
           ))}
         </div>
       )}
+      {note && <div className="px-4 pb-2 text-[11px] text-zinc-500">{note}</div>}
       <div className="px-2 pb-4">
         {!hasData ? (
           <div className="h-64 flex items-center justify-center text-xs text-zinc-500">No spend in this range.</div>
@@ -102,17 +106,18 @@ export default function CostTrendChart({ points, workspaces, granularity, onGran
                 />
                 <Tooltip
                   cursor={{ fill: "rgba(161,161,170,0.15)" }}
-                  content={(props) => <TrendTooltip {...props} workspaces={workspaces} />}
+                  content={(props) => <TrendTooltip {...props} series={series} countNoun={countNoun} />}
                 />
-                {workspaces.map((ws, i) => (
+                {series.map((s, i) => (
                   <Bar
-                    key={ws}
-                    dataKey={ws}
+                    key={s.key}
+                    dataKey={field(s.key)}
+                    name={s.label}
                     stackId="spend"
-                    fill={WORKSPACE_COLOR_VAR[ws]}
+                    fill={s.color}
                     stroke="var(--background)"
                     strokeWidth={stacked ? 1 : 0}
-                    radius={i === workspaces.length - 1 ? [4, 4, 0, 0] : 0}
+                    radius={i === series.length - 1 ? [4, 4, 0, 0] : 0}
                     maxBarSize={48}
                     isAnimationActive={false}
                   />
@@ -130,33 +135,37 @@ function TrendTooltip({
   active,
   payload,
   label,
-  workspaces,
+  series,
+  countNoun,
 }: {
   active?: boolean;
   payload?: readonly { payload?: unknown }[];
   label?: string | number;
-  workspaces: readonly Workspace[];
+  series: readonly ChartSeries[];
+  countNoun: string;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload as Datum;
   return (
     <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-xs shadow-sm">
       <div className="font-medium mb-1">{label}</div>
-      {workspaces.length > 1 &&
-        [...workspaces].reverse().map((ws) => (
-          <div key={ws} className="flex items-center justify-between gap-4">
+      {series.length > 1 &&
+        [...series].reverse().map((s) => (
+          <div key={s.key} className="flex items-center justify-between gap-4">
             <span className="inline-flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400">
-              <span className="h-2 w-2 rounded-sm" style={{ background: WORKSPACE_COLOR_VAR[ws] }} />
-              {workspaceLabel(ws)}
+              <span className="h-2 w-2 rounded-sm" style={{ background: s.color }} />
+              {s.label}
             </span>
-            <span className="tabular-nums">{fmtUsd((d[ws] ?? 0) * 100)}</span>
+            <span className="tabular-nums">{fmtUsd(Number(d[field(s.key)] ?? 0) * 100)}</span>
           </div>
         ))}
       <div className="flex items-center justify-between gap-4 mt-1 pt-1 border-t border-zinc-200 dark:border-zinc-700 font-medium">
         <span>Total</span>
         <span className="tabular-nums">{fmtUsd(d.total * 100)}</span>
       </div>
-      <div className="text-zinc-500 mt-0.5">{fmtInt(d.calls)} calls</div>
+      <div className="text-zinc-500 mt-0.5">
+        {fmtInt(d.count)} {countNoun}
+      </div>
     </div>
   );
 }
